@@ -2,13 +2,12 @@
   "name": "order-service",
   "version": "1.0.0",
   "private": true,
-  "description": "레퍼런스 서비스 — order.created.v1 이벤트를 발행한다",
+  "description": "레퍼런스 서비스 — 주문을 DB에 저장하며 Outbox 패턴으로 order.created.v1 발행을 예약한다",
   "scripts": {
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "kafka-forge": "^0.1.0",
-    "kafkajs": "^2.2.4",
+    "mysql2": "^3.11.0",
     "shared-events": "^1.0.0"
   },
   "devDependencies": {

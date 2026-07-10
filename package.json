@@ -20,13 +20,17 @@
     "phase2:order-service": "npm run start -w order-service",
     "phase2:notification-service": "npm run start -w notification-service",
     "phase3:build-core": "npm run build -w kafka-forge",
-    "phase3:setup-dlq-topic": "tsx src/phase3/setup-dlq-topic.ts"
+    "phase3:setup-dlq-topic": "tsx src/phase3/setup-dlq-topic.ts",
+    "phase4:build-core": "npm run build -w kafka-forge",
+    "phase4:order-service": "dotenv -e .env -- npm run start -w order-service",
+    "phase4:outbox-relay": "dotenv -e .env -- npm run start -w outbox-relay"
   },
   "dependencies": {
     "kafkajs": "^2.2.4"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "dotenv-cli": "^7.4.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

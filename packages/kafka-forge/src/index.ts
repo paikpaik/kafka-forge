@@ -6,3 +6,5 @@ export { StandardConsumer } from "./consumer";
 export type { RetryOptions, SubscribeOptions } from "./consumer";
 export { InMemoryIdempotencyStore } from "./idempotency";
 export type { IdempotencyStore } from "./idempotency";
+export { OutboxPublisher } from "./outbox";
+export type { OutboxRecord, OutboxStore } from "./outbox";
