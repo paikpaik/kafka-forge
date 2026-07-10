@@ -2,15 +2,23 @@
   "name": "kafka-forge",
   "version": "1.0.0",
   "private": true,
-  "description": "Kafka 코어 모듈 학습 및 설계 프로젝트",
+  "description": "여러 서비스가 표준화된 방식으로 Kafka를 쓸 수 있게 해주는 코어 모듈",
   "type": "commonjs",
+  "workspaces": [
+    "packages/*",
+    "services/*"
+  ],
   "scripts": {
     "compose:up": "docker compose up -d",
     "compose:down": "docker compose down",
     "compose:logs": "docker compose logs -f redpanda",
     "phase1:setup-topic": "tsx src/phase1/setup-topic.ts",
     "phase1:produce": "tsx src/phase1/producer.ts",
-    "phase1:consume": "tsx src/phase1/consumer.ts"
+    "phase1:consume": "tsx src/phase1/consumer.ts",
+    "phase2:build-core": "npm run build -w kafka-forge",
+    "phase2:setup-topic": "tsx src/phase2/setup-topics.ts",
+    "phase2:order-service": "npm run start -w order-service",
+    "phase2:notification-service": "npm run start -w notification-service"
   },
   "dependencies": {
     "kafkajs": "^2.2.4"

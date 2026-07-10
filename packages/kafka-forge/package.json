@@ -1,0 +1,21 @@
+{
+  "name": "kafka-forge",
+  "version": "0.1.0",
+  "description": "여러 서비스가 표준화된 방식으로 Kafka를 쓸 수 있게 해주는 코어 모듈 (토픽 네이밍 컨벤션, 스키마 검증, 파티션 키 전략)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
