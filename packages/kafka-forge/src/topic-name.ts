@@ -13,3 +13,8 @@ export function createTopicName(domain: string, event: string, version: number):
   assertValidTopicName(topic);
   return topic;
 }
+
+export function toDlqTopicName(topic: string): string {
+  assertValidTopicName(topic);
+  return `${topic}.dlq`;
+}

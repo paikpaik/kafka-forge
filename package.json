@@ -18,7 +18,9 @@
     "phase2:build-core": "npm run build -w kafka-forge",
     "phase2:setup-topic": "tsx src/phase2/setup-topics.ts",
     "phase2:order-service": "npm run start -w order-service",
-    "phase2:notification-service": "npm run start -w notification-service"
+    "phase2:notification-service": "npm run start -w notification-service",
+    "phase3:build-core": "npm run build -w kafka-forge",
+    "phase3:setup-dlq-topic": "tsx src/phase3/setup-dlq-topic.ts"
   },
   "dependencies": {
     "kafkajs": "^2.2.4"
