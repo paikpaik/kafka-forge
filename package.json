@@ -1,0 +1,23 @@
+{
+  "name": "kafka-forge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kafka 코어 모듈 학습 및 설계 프로젝트",
+  "type": "commonjs",
+  "scripts": {
+    "compose:up": "docker compose up -d",
+    "compose:down": "docker compose down",
+    "compose:logs": "docker compose logs -f redpanda",
+    "phase1:setup-topic": "tsx src/phase1/setup-topic.ts",
+    "phase1:produce": "tsx src/phase1/producer.ts",
+    "phase1:consume": "tsx src/phase1/consumer.ts"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
