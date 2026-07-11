@@ -4,11 +4,11 @@
 
 | 항목 | 내용 |
 |------|------|
-| 패키지명 | `kafka-forge` (forge 시리즈의 Kafka 담당 모듈, [node-forge](https://github.com/paikpaik/node-forge)와 형제 관계) |
+| 패키지명 | `@paikpaik/kafka-forge` (GitHub Packages, forge 시리즈의 Kafka 담당 모듈, [node-forge](https://github.com/paikpaik/node-forge)와 형제 관계) |
 | 기술 스택 | TypeScript, KafkaJS, Zod, `@opentelemetry/api`, `prom-client`, Docker(Redpanda) |
 | 역할 | 여러 서비스가 표준화된 방식으로 Kafka를 쓸 수 있게 해주는 코어 모듈 (단일 npm 패키지) |
 
-이 레포 자체가 `kafka-forge`의 소스이자 배포 대상이다. 언제든 `npm publish` 가능한 상태를 유지한다. Phase 1~5로 Kafka를 학습하며 만든 레퍼런스 서비스/모노레포 구조는 정리 완료(2026-07-11) — `docs/`, `kafka-core-project-plan.md`에 학습 기록만 남아있다.
+이 레포 자체가 `@paikpaik/kafka-forge`의 소스이자 배포 대상이다. `.github/workflows/publish.yml`이 `v*` 태그 push 시 GitHub Packages로 배포한다 (node-forge와 동일 패턴, 아직 실제 태그를 찍은 적은 없음 — 배포 준비만 된 상태). Phase 1~5로 Kafka를 학습하며 만든 레퍼런스 서비스/모노레포 구조는 정리 완료(2026-07-11) — `docs/`, `kafka-core-project-plan.md`에 학습 기록만 남아있다.
 
 ---
 

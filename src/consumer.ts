@@ -15,9 +15,16 @@ export interface RetryOptions {
 const DEFAULT_RETRY: RetryOptions = { attempts: 3, initialBackoffMs: 1000 };
 const LAG_POLL_INTERVAL_MS = 10000;
 
-export interface SubscribeOptions {
+export interface SubscribeOptions<T = unknown> {
   retry?: RetryOptions | false;
   idempotencyStore?: IdempotencyStore;
+  /**
+   * 멱등성 키를 어떻게 뽑을지 커스텀한다. 기본값(생략 시)은 `topic:partition:offset` —
+   * "이 메시지가 재배달됐는가"만 잡는다. Outbox가 같은 이벤트를 서로 다른 offset으로 두 번
+   * 발행한 경우처럼 "이 비즈니스 이벤트를 이미 처리했는가"까지 잡고 싶으면 orderId 같은
+   * 비즈니스 키를 반환하도록 넘긴다.
+   */
+  dedupeKey?: (payload: T) => string;
 }
 
 export interface ShutdownOptions {
@@ -33,6 +40,7 @@ interface Route<T extends ZodType> {
   handler: (payload: z.infer<T>) => Promise<void> | void;
   retry: RetryOptions | null;
   idempotencyStore?: IdempotencyStore;
+  dedupeKey?: (payload: z.infer<T>) => string;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -98,7 +106,7 @@ export class StandardConsumer {
   async subscribe<T extends ZodType>(
     event: EventContract<T>,
     handler: (payload: z.infer<T>) => Promise<void> | void,
-    options: SubscribeOptions = {},
+    options: SubscribeOptions<z.infer<T>> = {},
   ): Promise<void> {
     if (this.running) {
       throw new Error(
@@ -115,6 +123,7 @@ export class StandardConsumer {
       handler,
       retry,
       idempotencyStore: options.idempotencyStore,
+      dedupeKey: options.dedupeKey,
     });
 
     await this.consumer.subscribe({ topic: event.topic, fromBeginning: true });
@@ -146,7 +155,7 @@ export class StandardConsumer {
     partition: number,
     message: KafkaMessage,
   ): Promise<void> {
-    const { event, handler, retry, idempotencyStore } = route;
+    const { event, handler, retry, idempotencyStore, dedupeKey } = route;
     const raw = message.value?.toString();
     if (!raw) return;
 
@@ -159,7 +168,9 @@ export class StandardConsumer {
       return;
     }
 
-    const idempotencyKey = `${event.topic}:${partition}:${message.offset}`;
+    const idempotencyKey = dedupeKey
+      ? `${event.topic}:${dedupeKey(parsed.data)}`
+      : `${event.topic}:${partition}:${message.offset}`;
     if (idempotencyStore && (await idempotencyStore.wasProcessed(idempotencyKey))) {
       console.log(`[StandardConsumer] 이미 처리된 메시지, 스킵: ${idempotencyKey}`);
       return;

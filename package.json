@@ -1,6 +1,6 @@
 {
-  "name": "kafka-forge",
-  "version": "0.1.0",
+  "name": "@paikpaik/kafka-forge",
+  "version": "1.0.0",
   "description": "여러 서비스가 표준화된 방식으로 Kafka를 쓸 수 있게 해주는 코어 모듈 (토픽 네이밍 컨벤션, 스키마 검증, 파티션 키 전략)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -8,6 +8,13 @@
     "dist"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/paikpaik/kafka-forge.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
@@ -25,6 +32,9 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
+    "@opentelemetry/context-async-hooks": "^2.9.0",
+    "@opentelemetry/core": "^2.9.0",
+    "@opentelemetry/sdk-trace-base": "^2.9.0",
     "@types/node": "^26.1.1",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",

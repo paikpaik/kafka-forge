@@ -4,8 +4,15 @@
 
 ## 설치
 
+GitHub Packages로 배포합니다. 설치하는 쪽 프로젝트의 `.npmrc`에 `@paikpaik` 스코프 레지스트리를 등록해야 합니다:
+
+```
+# .npmrc
+@paikpaik:registry=https://npm.pkg.github.com
+```
+
 ```bash
-npm install kafka-forge kafkajs zod
+npm install @paikpaik/kafka-forge kafkajs zod
 ```
 
 ## 빠른 사용 예시
@@ -14,7 +21,7 @@ npm install kafka-forge kafkajs zod
 
 ```ts
 import { z } from "zod";
-import { createTopicName, defineEvent } from "kafka-forge";
+import { createTopicName, defineEvent } from "@paikpaik/kafka-forge";
 
 export const OrderCreated = defineEvent({
   topic: createTopicName("order", "created", 1), // "order.created.v1"
@@ -30,7 +37,7 @@ export const OrderCreated = defineEvent({
 
 ```ts
 import { Kafka } from "kafkajs";
-import { StandardProducer } from "kafka-forge";
+import { StandardProducer } from "@paikpaik/kafka-forge";
 import { OrderCreated } from "./events";
 
 const kafka = new Kafka({ brokers: ["localhost:19092"] });
@@ -46,7 +53,7 @@ await producer.send(OrderCreated, { orderId: "order-1", amount: 42.5 });
 구독 (`subscribe()`는 등록만 하고, `run()`을 호출해야 실제 소비가 시작됩니다 — 하나의 컨슈머(그룹)로 여러 토픽을 동시에 처리할 수 있습니다):
 
 ```ts
-import { StandardConsumer, InMemoryIdempotencyStore } from "kafka-forge";
+import { StandardConsumer, InMemoryIdempotencyStore } from "@paikpaik/kafka-forge";
 
 const consumer = new StandardConsumer(kafka, "notification-service");
 await consumer.connect();
@@ -76,7 +83,7 @@ await consumer.run(); // 모든 subscribe()가 끝난 뒤 한 번만 호출
 재시도해봐야 절대 성공할 리 없는 에러(예: 이미 취소된 주문)는 `NonRetryableError`를 던지면 남은 재시도를 건너뛰고 바로 DLQ로 보냅니다:
 
 ```ts
-import { NonRetryableError } from "kafka-forge";
+import { NonRetryableError } from "@paikpaik/kafka-forge";
 
 await consumer.subscribe(OrderCreated, async (payload) => {
   if (payload.amount < 0) {
@@ -90,6 +97,15 @@ await consumer.subscribe(OrderCreated, async (payload) => {
 
 ```ts
 const idempotencyStore = new InMemoryIdempotencyStore({ ttlMs: 10 * 60 * 1000 }); // 10분
+```
+
+멱등성 키는 기본값으로 `topic:partition:offset`(같은 메시지의 재배달만 방지)을 씁니다. Outbox가 같은 이벤트를 서로 다른 offset으로 두 번 발행한 경우처럼, "같은 비즈니스 이벤트"를 기준으로 막고 싶으면 `dedupeKey`를 넘깁니다:
+
+```ts
+await consumer.subscribe(OrderCreated, handler, {
+  idempotencyStore,
+  dedupeKey: (payload) => payload.orderId, // offset이 달라도 같은 orderId면 중복으로 스킵
+});
 ```
 
 ## 핵심 기능
@@ -112,7 +128,7 @@ const idempotencyStore = new InMemoryIdempotencyStore({ ttlMs: 10 * 60 * 1000 })
 Kafka 메시지는 이미 JSON이라 다른 언어도 그냥 읽을 수 있지만, "이 메시지 모양이 어떻게 생겼는지"는 지금까지 TS 코드를 봐야만 알 수 있었습니다. `toJsonSchema()`로 이 문제를 풉니다:
 
 ```ts
-import { toJsonSchema, writeJsonSchema } from "kafka-forge";
+import { toJsonSchema, writeJsonSchema } from "@paikpaik/kafka-forge";
 import { OrderCreated } from "./events";
 
 const jsonSchema = toJsonSchema(OrderCreated);

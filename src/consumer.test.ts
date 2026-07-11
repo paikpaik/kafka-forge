@@ -121,6 +121,40 @@ describe("StandardConsumer.subscribe/run", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it("dedupeKey를 넘기면 offset이 달라도 같은 비즈니스 키면 중복으로 스킵한다", async () => {
+    const { kafka, emit } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const handler = vi.fn();
+    const idempotencyStore = new InMemoryIdempotencyStore();
+
+    await consumer.subscribe(OrderCreated, handler, {
+      idempotencyStore,
+      dedupeKey: (payload) => payload.orderId,
+    });
+    await consumer.run();
+
+    // 같은 orderId를 서로 다른 offset(재발행 상황을 흉내)으로 두 번 보냄
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { offset: "0" });
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { offset: "1" });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("dedupeKey를 생략하면 기본값(topic:partition:offset)으로 동작해 다른 offset은 중복으로 안 본다", async () => {
+    const { kafka, emit } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const handler = vi.fn();
+    const idempotencyStore = new InMemoryIdempotencyStore();
+
+    await consumer.subscribe(OrderCreated, handler, { idempotencyStore });
+    await consumer.run();
+
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { offset: "0" });
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { offset: "1" });
+
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
   it("handler가 몇 번 실패하다 성공하면 재시도 후 정상 처리되고 DLQ로 가지 않는다", async () => {
     const { kafka, emit, dlqProducerObj } = createFakeKafka();
     const consumer = createConsumer(kafka);
