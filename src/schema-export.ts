@@ -17,6 +17,9 @@ export function toJsonSchema<T extends ZodType>(event: EventContract<T>): JsonSc
   };
 }
 
-export function writeJsonSchema<T extends ZodType>(event: EventContract<T>, filePath: string): void {
+export function writeJsonSchema<T extends ZodType>(
+  event: EventContract<T>,
+  filePath: string,
+): void {
   writeFileSync(filePath, JSON.stringify(toJsonSchema(event), null, 2));
 }

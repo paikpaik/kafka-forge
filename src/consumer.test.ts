@@ -4,6 +4,7 @@ import { z } from "zod";
 import { StandardConsumer } from "./consumer";
 import { defineEvent } from "./event-contract";
 import { InMemoryIdempotencyStore } from "./idempotency";
+import { NonRetryableError } from "./errors";
 
 type EachMessageHandler = (args: {
   topic: string;
@@ -111,7 +112,11 @@ describe("StandardConsumer.subscribe/run", () => {
 
     await consumer.subscribe(OrderCreated, handler, { idempotencyStore });
     await consumer.run();
-    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { partition: 0, offset: "0" });
+    await emit(
+      "order.created.v1",
+      { orderId: "order-1", amount: 10 },
+      { partition: 0, offset: "0" },
+    );
 
     expect(handler).not.toHaveBeenCalled();
   });
@@ -158,6 +163,23 @@ describe("StandardConsumer.subscribe/run", () => {
     expect(dlqCall.messages[0].key).toBe("order-1"); // 원본 파티션 키가 보존되어야 재처리 시 순서를 지킬 수 있음
   });
 
+  it("NonRetryableError를 던지면 남은 재시도를 건너뛰고 바로 DLQ로 보낸다", async () => {
+    const { kafka, emit, dlqProducerObj } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const handler = vi.fn().mockRejectedValue(new NonRetryableError("이미 취소된 주문"));
+
+    await consumer.subscribe(OrderCreated, handler, {
+      retry: { attempts: 5, initialBackoffMs: 1 },
+    });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 });
+
+    expect(handler).toHaveBeenCalledTimes(1); // 5번이 아니라 1번만 시도하고 포기
+    expect(dlqProducerObj.send).toHaveBeenCalledTimes(1);
+    const dlqPayload = JSON.parse(dlqProducerObj.send.mock.calls[0][0].messages[0].value);
+    expect(dlqPayload.error).toBe("이미 취소된 주문");
+  });
+
   it("retry: false면 재시도 없이 한 번만 시도하고 바로 DLQ로 보낸다", async () => {
     const { kafka, emit, dlqProducerObj } = createFakeKafka();
     const consumer = createConsumer(kafka);
@@ -191,6 +213,18 @@ describe("StandardConsumer.subscribe/run", () => {
     expect(paymentHandler).toHaveBeenCalledWith({ paymentId: "payment-1" });
   });
 
+  it("run()에 넘긴 partitionsConsumedConcurrently를 kafkajs consumer.run으로 그대로 전달한다", async () => {
+    const { kafka, consumerObj } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+
+    await consumer.subscribe(OrderCreated, vi.fn());
+    await consumer.run({ partitionsConsumedConcurrently: 4 });
+
+    expect(consumerObj.run).toHaveBeenCalledWith(
+      expect.objectContaining({ partitionsConsumedConcurrently: 4 }),
+    );
+  });
+
   it("같은 토픽을 두 번 구독하면 예외를 던진다", async () => {
     const { kafka } = createFakeKafka();
     const consumer = createConsumer(kafka);
@@ -207,5 +241,45 @@ describe("StandardConsumer.subscribe/run", () => {
     await consumer.run();
 
     await expect(consumer.subscribe(PaymentCompleted, vi.fn())).rejects.toThrow();
+  });
+});
+
+describe("StandardConsumer.registerShutdown", () => {
+  it("기본값으로는 SIGINT 수신 시 disconnect만 하고 프로세스를 종료하지 않는다", async () => {
+    const { kafka, consumerObj } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const onSpy = vi.spyOn(process, "on");
+
+    consumer.registerShutdown();
+    const sigintHandler = onSpy.mock.calls.find(
+      ([signal]) => signal === "SIGINT",
+    )?.[1] as () => Promise<void>;
+    await sigintHandler();
+
+    expect(consumerObj.disconnect).toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    exitSpy.mockRestore();
+    onSpy.mockRestore();
+  });
+
+  it("{ exitProcess: true }를 넘기면 disconnect 후 프로세스를 종료한다", async () => {
+    const { kafka, consumerObj } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const onSpy = vi.spyOn(process, "on");
+
+    consumer.registerShutdown({ exitProcess: true });
+    const sigtermHandler = onSpy.mock.calls.find(
+      ([signal]) => signal === "SIGTERM",
+    )?.[1] as () => Promise<void>;
+    await sigtermHandler();
+
+    expect(consumerObj.disconnect).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(0);
+
+    exitSpy.mockRestore();
+    onSpy.mockRestore();
   });
 });

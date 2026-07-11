@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryIdempotencyStore } from "./idempotency";
 
 describe("InMemoryIdempotencyStore", () => {
@@ -17,5 +17,34 @@ describe("InMemoryIdempotencyStore", () => {
     const store = new InMemoryIdempotencyStore();
     await store.markProcessed("order.created.v1:0:1");
     await expect(store.wasProcessed("order.created.v1:0:2")).resolves.toBe(false);
+  });
+
+  describe("ttlMs", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("TTL이 지나면 처리 안 한 것으로 취급한다", async () => {
+      vi.useFakeTimers();
+      const store = new InMemoryIdempotencyStore({ ttlMs: 100 });
+
+      await store.markProcessed("order.created.v1:0:1");
+      await expect(store.wasProcessed("order.created.v1:0:1")).resolves.toBe(true);
+
+      vi.advanceTimersByTime(150);
+
+      await expect(store.wasProcessed("order.created.v1:0:1")).resolves.toBe(false);
+      store.stop();
+    });
+
+    it("TTL을 지정하지 않으면 영구히 처리된 것으로 취급한다", async () => {
+      vi.useFakeTimers();
+      const store = new InMemoryIdempotencyStore();
+
+      await store.markProcessed("order.created.v1:0:1");
+      vi.advanceTimersByTime(1000 * 60 * 60 * 24);
+
+      await expect(store.wasProcessed("order.created.v1:0:1")).resolves.toBe(true);
+    });
   });
 });

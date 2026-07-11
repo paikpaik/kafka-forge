@@ -1,4 +1,4 @@
-import type { Kafka, Producer } from "kafkajs";
+import type { Kafka, Producer, ProducerConfig } from "kafkajs";
 import { withProducerSpan } from "./tracing";
 import { producedTotal, produceErrorsTotal } from "./metrics";
 
@@ -20,8 +20,9 @@ export class OutboxPublisher {
   constructor(
     kafka: Kafka,
     private readonly store: OutboxStore,
+    producerOptions: ProducerConfig = {},
   ) {
-    this.producer = kafka.producer();
+    this.producer = kafka.producer(producerOptions);
   }
 
   async connect(): Promise<void> {
@@ -38,7 +39,7 @@ export class OutboxPublisher {
 
     for (const record of pending) {
       try {
-        await withProducerSpan(record.topic, async (traceHeaders) => {
+        await withProducerSpan(record.topic, record.key, async (traceHeaders) => {
           await this.producer.send({
             topic: record.topic,
             messages: [

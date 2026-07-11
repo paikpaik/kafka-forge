@@ -9,11 +9,14 @@ function createFakeKafka() {
     disconnect: vi.fn().mockResolvedValue(undefined),
     send,
   };
-  const kafka = { producer: () => producer } as unknown as Kafka;
-  return { kafka, producer };
+  const producerFactory = vi.fn().mockReturnValue(producer);
+  const kafka = { producer: producerFactory } as unknown as Kafka;
+  return { kafka, producer, producerFactory };
 }
 
-function createFakeStore(records: OutboxRecord[]): OutboxStore & { markPublished: ReturnType<typeof vi.fn> } {
+function createFakeStore(
+  records: OutboxRecord[],
+): OutboxStore & { markPublished: ReturnType<typeof vi.fn> } {
   return {
     fetchPending: vi.fn().mockResolvedValue(records),
     markPublished: vi.fn().mockResolvedValue(undefined),
@@ -64,5 +67,13 @@ describe("OutboxPublisher.publishPending", () => {
 
     await expect(publisher.publishPending()).rejects.toThrow("network error");
     expect(store.markPublished).not.toHaveBeenCalled();
+  });
+
+  it("세 번째 인자로 넘긴 producer 옵션을 kafka.producer()로 그대로 전달한다", () => {
+    const { kafka, producerFactory } = createFakeKafka();
+    const store = createFakeStore([]);
+    new OutboxPublisher(kafka, store, { idempotent: true });
+
+    expect(producerFactory).toHaveBeenCalledWith({ idempotent: true });
   });
 });

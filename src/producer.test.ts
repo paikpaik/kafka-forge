@@ -11,8 +11,9 @@ function createFakeKafka() {
     disconnect: vi.fn().mockResolvedValue(undefined),
     send,
   };
-  const kafka = { producer: () => producer } as unknown as Kafka;
-  return { kafka, producer };
+  const producerFactory = vi.fn().mockReturnValue(producer);
+  const kafka = { producer: producerFactory } as unknown as Kafka;
+  return { kafka, producer, producerFactory };
 }
 
 const OrderCreated = defineEvent({
@@ -57,5 +58,12 @@ describe("StandardProducer.send", () => {
     await expect(
       standardProducer.send(OrderCreated, { orderId: "order-1", amount: 10 }),
     ).rejects.toThrow("broker unavailable");
+  });
+
+  it("생성자에 넘긴 옵션(idempotent 등)을 kafka.producer()로 그대로 전달한다", () => {
+    const { kafka, producerFactory } = createFakeKafka();
+    new StandardProducer(kafka, { idempotent: true, maxInFlightRequests: 1 });
+
+    expect(producerFactory).toHaveBeenCalledWith({ idempotent: true, maxInFlightRequests: 1 });
   });
 });

@@ -35,6 +35,8 @@ import { OrderCreated } from "./events";
 
 const kafka = new Kafka({ brokers: ["localhost:19092"] });
 const producer = new StandardProducer(kafka);
+// 네트워크 재시도로 인한 중복 발행이 걱정되면: new StandardProducer(kafka, { idempotent: true })
+// (kafkajs의 ProducerConfig를 그대로 받는다. OutboxPublisher도 세 번째 인자로 동일하게 받는다.)
 await producer.connect();
 
 await producer.send(OrderCreated, { orderId: "order-1", amount: 42.5 });
@@ -48,7 +50,8 @@ import { StandardConsumer, InMemoryIdempotencyStore } from "kafka-forge";
 
 const consumer = new StandardConsumer(kafka, "notification-service");
 await consumer.connect();
-consumer.registerShutdown(); // SIGINT/SIGTERM 수신 시 정상 탈퇴
+consumer.registerShutdown(); // SIGINT/SIGTERM 수신 시 정상 탈퇴 (기본값: 프로세스 강제 종료 안 함)
+// 이 프로세스에 컨슈머 하나뿐이라 종료까지 맡기고 싶다면: registerShutdown({ exitProcess: true })
 
 await consumer.subscribe(
   OrderCreated,
@@ -67,6 +70,26 @@ await consumer.subscribe(PaymentCompleted, async (payload) => {
 });
 
 await consumer.run(); // 모든 subscribe()가 끝난 뒤 한 번만 호출
+// 파티션이 여러 개면 consumer.run({ partitionsConsumedConcurrently: 4 })로 이 인스턴스 안에서 병렬 처리 가능
+```
+
+재시도해봐야 절대 성공할 리 없는 에러(예: 이미 취소된 주문)는 `NonRetryableError`를 던지면 남은 재시도를 건너뛰고 바로 DLQ로 보냅니다:
+
+```ts
+import { NonRetryableError } from "kafka-forge";
+
+await consumer.subscribe(OrderCreated, async (payload) => {
+  if (payload.amount < 0) {
+    throw new NonRetryableError("금액이 음수인 주문은 재시도해도 소용없음");
+  }
+  // ...
+});
+```
+
+`InMemoryIdempotencyStore`는 기본값으로는 TTL이 없어서 오래 도는 프로세스에 그대로 쓰면 메모리가 계속 쌓입니다. `ttlMs`를 지정하면 그 시간이 지난 키를 주기적으로 정리합니다:
+
+```ts
+const idempotencyStore = new InMemoryIdempotencyStore({ ttlMs: 10 * 60 * 1000 }); // 10분
 ```
 
 ## 핵심 기능
@@ -112,8 +135,12 @@ writeJsonSchema(OrderCreated, "./schemas/order-created.schema.json");
 docker compose up -d   # Redpanda(로컬 Kafka 호환 브로커) + 웹 콘솔(localhost:8080)
 npm install
 npm test               # vitest, 실제 브로커 없이 fake kafkajs로 검증
+npm run lint            # eslint
+npm run format          # prettier --write
 npm run build
 ```
+
+`main` 브랜치 push와 PR마다 GitHub Actions(`.github/workflows/ci.yml`)가 lint/format/test/build를 검증합니다.
 
 ## 이 프로젝트의 배경
 

@@ -3,6 +3,7 @@ import type { z, ZodType } from "zod";
 import type { EventContract } from "./event-contract";
 import type { IdempotencyStore } from "./idempotency";
 import { toDlqTopicName } from "./topic-name";
+import { NonRetryableError } from "./errors";
 import { withConsumerSpan, withProducerSpan } from "./tracing";
 import { consumedTotal, consumeErrorsTotal, consumeDurationSeconds, consumerLag } from "./metrics";
 
@@ -17,6 +18,14 @@ const LAG_POLL_INTERVAL_MS = 10000;
 export interface SubscribeOptions {
   retry?: RetryOptions | false;
   idempotencyStore?: IdempotencyStore;
+}
+
+export interface ShutdownOptions {
+  exitProcess?: boolean;
+}
+
+export interface RunOptions {
+  partitionsConsumedConcurrently?: number;
 }
 
 interface Route<T extends ZodType> {
@@ -64,10 +73,19 @@ export class StandardConsumer {
     }
   }
 
-  registerShutdown(): void {
+  /**
+   * SIGINT/SIGTERM 수신 시 정상 탈퇴(disconnect)한다. 기본값으로는 프로세스를 강제 종료하지 않는다 —
+   * 라이브러리가 process.exit()을 호출하면 같은 프로세스에서 돌고 있는 다른 리소스(다른 consumer,
+   * HTTP 서버 등)가 자기 정리 없이 같이 죽는다. 이 프로세스에 이 컨슈머 하나뿐이라 종료까지
+   * 맡기고 싶다면 { exitProcess: true }를 명시한다.
+   */
+  registerShutdown(options: ShutdownOptions = {}): void {
+    const exitProcess = options.exitProcess ?? false;
     const shutdown = async () => {
       await this.disconnect();
-      process.exit(0);
+      if (exitProcess) {
+        process.exit(0);
+      }
     };
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
@@ -83,26 +101,38 @@ export class StandardConsumer {
     options: SubscribeOptions = {},
   ): Promise<void> {
     if (this.running) {
-      throw new Error("run() 호출 이후에는 subscribe()를 추가할 수 없습니다. 모든 subscribe()를 먼저 호출하세요.");
+      throw new Error(
+        "run() 호출 이후에는 subscribe()를 추가할 수 없습니다. 모든 subscribe()를 먼저 호출하세요.",
+      );
     }
     if (this.routes.has(event.topic)) {
       throw new Error(`이미 구독 중인 토픽입니다: ${event.topic}`);
     }
 
     const retry = options.retry === false ? null : { ...DEFAULT_RETRY, ...options.retry };
-    this.routes.set(event.topic, { event, handler, retry, idempotencyStore: options.idempotencyStore });
+    this.routes.set(event.topic, {
+      event,
+      handler,
+      retry,
+      idempotencyStore: options.idempotencyStore,
+    });
 
     await this.consumer.subscribe({ topic: event.topic, fromBeginning: true });
   }
 
-  /** subscribe()로 등록한 모든 토픽에 대해 실제 소비를 시작한다. 컨슈머당 한 번만 호출한다. */
-  async run(): Promise<void> {
+  /**
+   * subscribe()로 등록한 모든 토픽에 대해 실제 소비를 시작한다. 컨슈머당 한 번만 호출한다.
+   * `partitionsConsumedConcurrently`로 이 컨슈머 인스턴스 하나가 할당받은 파티션들을 몇 개까지
+   * 동시에 처리할지 정할 수 있다 (기본 1 — kafkajs 기본값과 동일, 파티션을 순차 처리).
+   */
+  async run(options: RunOptions = {}): Promise<void> {
     if (this.running) return;
     this.running = true;
 
     this.startLagPolling();
 
     await this.consumer.run({
+      partitionsConsumedConcurrently: options.partitionsConsumedConcurrently,
       eachMessage: async ({ topic, partition, message }) => {
         const route = this.routes.get(topic);
         if (!route) return;
@@ -135,18 +165,23 @@ export class StandardConsumer {
       return;
     }
 
-    await withConsumerSpan(event.topic, message.headers ?? {}, async () => {
-      const stopTimer = consumeDurationSeconds.startTimer({
-        topic: event.topic,
-        group: this.groupId,
-      });
-      try {
-        await this.runWithRetry(event, parsed.data, handler, retry);
-        consumedTotal.inc({ topic: event.topic, group: this.groupId });
-      } finally {
-        stopTimer();
-      }
-    });
+    await withConsumerSpan(
+      event.topic,
+      message.key?.toString(),
+      message.headers ?? {},
+      async () => {
+        const stopTimer = consumeDurationSeconds.startTimer({
+          topic: event.topic,
+          group: this.groupId,
+        });
+        try {
+          await this.runWithRetry(event, parsed.data, handler, retry);
+          consumedTotal.inc({ topic: event.topic, group: this.groupId });
+        } finally {
+          stopTimer();
+        }
+      },
+    );
 
     if (idempotencyStore) {
       await idempotencyStore.markProcessed(idempotencyKey);
@@ -180,6 +215,9 @@ export class StandardConsumer {
           `[StandardConsumer] handler 실패 (시도 ${attempt}/${retry.attempts}): topic=${event.topic}`,
           (err as Error).message,
         );
+        if (err instanceof NonRetryableError) {
+          break;
+        }
         if (attempt < retry.attempts) {
           await sleep(retry.initialBackoffMs * 2 ** (attempt - 1));
         }
@@ -201,12 +239,13 @@ export class StandardConsumer {
     }
 
     const dlqTopic = toDlqTopicName(event.topic);
-    await withProducerSpan(dlqTopic, async (traceHeaders) => {
+    const dlqKey = event.partitionKey(payload);
+    await withProducerSpan(dlqTopic, dlqKey, async (traceHeaders) => {
       await this.dlqProducer!.send({
         topic: dlqTopic,
         messages: [
           {
-            key: event.partitionKey(payload),
+            key: dlqKey,
             headers: traceHeaders,
             value: JSON.stringify({
               payload,
