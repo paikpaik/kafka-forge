@@ -1,3 +1,28 @@
+## 플랜 실행 이력
+
+### 완료: 2026-07-11
+
+**결과**: 성공
+
+**실제 변경 파일**:
+- `src/*.ts` — `packages/kafka-forge/src`에서 이동 (내용 변경 없음)
+- `package.json`, `tsconfig.json` — `packages/kafka-forge`의 것으로 교체, `@types/node` devDependency 추가(빌드 에러로 발견)
+- 삭제: `src/phase1~5/`(raw 스크립트), `services/`(order-service, notification-service, outbox-relay), `packages/`(kafka-forge 이동 후 shared-events와 함께), `scripts/kafka_forge/`(MySQL DDL, Prometheus/Grafana 설정), `.env`, `.env.example`, `seq.md`, `enterprise-flow.md`
+- `docker-compose.yml` — jaeger/prometheus/grafana 서비스 블록 제거, redpanda+console만 유지. 실행 중이던 jaeger/prometheus/grafana 컨테이너도 `--remove-orphans`로 정리
+- `.gitignore` — `.env` 라인 제거
+- `README.md`, `LICENSE` — 신규 작성
+- `.claude/CLAUDE.md`, `.claude/rules/project/convention.md`, `.claude/rules/common/principles.md` — 새 구조(단일 패키지, Phase 완료)에 맞게 갱신
+- `.claude-ops/backups/20260711/`, `.claude-ops/work/` — 규칙 변경 백업/동기화
+
+**계획과의 차이**:
+- 빌드 시 `@types/node`가 빠져있어 에러 발생 — 예전엔 워크스페이스 루트에 있던 게 hoisting으로 같이 쓰였는데, 워크스페이스가 없어지면서 직접 필요해짐. 계획엔 없었지만 즉시 추가해서 해결.
+- `.claude/rules/common/workflow.md`는 계획대로 이번 스코프에서 변경하지 않음.
+
+**잔존 작업**:
+- 없음. 이후는 `kafka-forge`에 새 기능을 확장하는 일반적인 개발 워크플로우로 전환.
+
+---
+
 # kafka-forge-repo-finalize — 학습 저장소를 진짜 kafka-forge 단일 패키지 레포로 정리
 
 ## 목표

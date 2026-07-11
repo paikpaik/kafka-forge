@@ -1,39 +1,24 @@
 {
   "name": "kafka-forge",
-  "version": "1.0.0",
-  "private": true,
-  "description": "여러 서비스가 표준화된 방식으로 Kafka를 쓸 수 있게 해주는 코어 모듈",
-  "type": "commonjs",
-  "workspaces": [
-    "packages/*",
-    "services/*"
+  "version": "0.1.0",
+  "description": "여러 서비스가 표준화된 방식으로 Kafka를 쓸 수 있게 해주는 코어 모듈 (토픽 네이밍 컨벤션, 스키마 검증, 파티션 키 전략)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
   ],
+  "license": "MIT",
   "scripts": {
-    "compose:up": "docker compose up -d",
-    "compose:down": "docker compose down",
-    "compose:logs": "docker compose logs -f redpanda",
-    "phase1:setup-topic": "tsx src/phase1/setup-topic.ts",
-    "phase1:produce": "tsx src/phase1/producer.ts",
-    "phase1:consume": "tsx src/phase1/consumer.ts",
-    "phase2:build-core": "npm run build -w kafka-forge",
-    "phase2:setup-topic": "tsx src/phase2/setup-topics.ts",
-    "phase2:order-service": "npm run start -w order-service",
-    "phase2:notification-service": "npm run start -w notification-service",
-    "phase3:build-core": "npm run build -w kafka-forge",
-    "phase3:setup-dlq-topic": "tsx src/phase3/setup-dlq-topic.ts",
-    "phase4:build-core": "npm run build -w kafka-forge",
-    "phase4:order-service": "dotenv -e .env -- npm run start -w order-service",
-    "phase4:outbox-relay": "dotenv -e .env -- npm run start -w outbox-relay",
-    "phase5:build-core": "npm run build -w kafka-forge",
-    "phase5:benchmark": "tsx src/phase5/run-benchmark.ts"
+    "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "kafkajs": "^2.2.4"
+    "@opentelemetry/api": "^1.9.0",
+    "kafkajs": "^2.2.4",
+    "prom-client": "^15.1.3",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "dotenv-cli": "^7.4.2",
-    "tsx": "^4.19.2",
+    "@types/node": "^26.1.1",
     "typescript": "^5.7.2"
   }
 }
