@@ -41,7 +41,7 @@ await producer.send(OrderCreated, { orderId: "order-1", amount: 42.5 });
 // payload는 발행 전 자동으로 zod 검증되고, 실패하면 예외를 던져 발행 자체가 막힙니다.
 ```
 
-구독:
+구독 (`subscribe()`는 등록만 하고, `run()`을 호출해야 실제 소비가 시작됩니다 — 하나의 컨슈머(그룹)로 여러 토픽을 동시에 처리할 수 있습니다):
 
 ```ts
 import { StandardConsumer, InMemoryIdempotencyStore } from "kafka-forge";
@@ -60,6 +60,13 @@ await consumer.subscribe(
     idempotencyStore: new InMemoryIdempotencyStore(),
   },
 );
+
+// 같은 그룹으로 다른 이벤트도 같이 처리하고 싶으면 run() 전에 subscribe()를 더 호출한다
+await consumer.subscribe(PaymentCompleted, async (payload) => {
+  console.log(`결제 완료: ${payload.paymentId}`);
+});
+
+await consumer.run(); // 모든 subscribe()가 끝난 뒤 한 번만 호출
 ```
 
 ## 핵심 기능

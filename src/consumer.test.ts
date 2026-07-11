@@ -6,6 +6,7 @@ import { defineEvent } from "./event-contract";
 import { InMemoryIdempotencyStore } from "./idempotency";
 
 type EachMessageHandler = (args: {
+  topic: string;
   partition: number;
   message: { value: Buffer | null; offset: string; headers?: Record<string, unknown> };
 }) => Promise<void>;
@@ -30,6 +31,7 @@ function createFakeKafka() {
 
   const adminObj = {
     connect: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn().mockResolvedValue(undefined),
     fetchTopicOffsets: vi.fn().mockResolvedValue([]),
     fetchOffsets: vi.fn().mockResolvedValue([]),
   };
@@ -45,9 +47,14 @@ function createFakeKafka() {
     consumerObj,
     dlqProducerObj,
     adminObj,
-    emit: async (value: unknown, options: { partition?: number; offset?: string } = {}) => {
-      if (!eachMessage) throw new Error("subscribe()가 아직 run()을 호출하지 않았습니다");
+    emit: async (
+      topic: string,
+      value: unknown,
+      options: { partition?: number; offset?: string } = {},
+    ) => {
+      if (!eachMessage) throw new Error("run()이 아직 호출되지 않았습니다");
       await eachMessage({
+        topic,
         partition: options.partition ?? 0,
         message: {
           value: Buffer.from(JSON.stringify(value)),
@@ -64,43 +71,54 @@ const OrderCreated = defineEvent({
   partitionKey: (payload) => payload.orderId,
 });
 
+const PaymentCompleted = defineEvent({
+  topic: "payment.completed.v1",
+  schema: z.object({ paymentId: z.string() }),
+  partitionKey: (payload) => payload.paymentId,
+});
+
 const activeConsumers: StandardConsumer[] = [];
 
 afterEach(async () => {
   await Promise.all(activeConsumers.splice(0).map((c) => c.disconnect()));
 });
 
-describe("StandardConsumer.subscribe", () => {
+function createConsumer(kafka: Kafka) {
+  const consumer = new StandardConsumer(kafka, "test-group");
+  activeConsumers.push(consumer);
+  return consumer;
+}
+
+describe("StandardConsumer.subscribe/run", () => {
   it("스키마 검증에 실패한 메시지는 handler를 호출하지 않는다", async () => {
     const { kafka, emit } = createFakeKafka();
-    const consumer = new StandardConsumer(kafka, "test-group");
-    activeConsumers.push(consumer);
+    const consumer = createConsumer(kafka);
     const handler = vi.fn();
 
     await consumer.subscribe(OrderCreated, handler);
-    await emit({ orderId: "order-1", amount: -1 }); // amount는 양수여야 함
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: -1 }); // amount는 양수여야 함
 
     expect(handler).not.toHaveBeenCalled();
   });
 
   it("이미 처리된 메시지는 멱등성 스토어에 의해 스킵된다", async () => {
     const { kafka, emit } = createFakeKafka();
-    const consumer = new StandardConsumer(kafka, "test-group");
-    activeConsumers.push(consumer);
+    const consumer = createConsumer(kafka);
     const handler = vi.fn();
     const idempotencyStore = new InMemoryIdempotencyStore();
     await idempotencyStore.markProcessed("order.created.v1:0:0");
 
     await consumer.subscribe(OrderCreated, handler, { idempotencyStore });
-    await emit({ orderId: "order-1", amount: 10 }, { partition: 0, offset: "0" });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { partition: 0, offset: "0" });
 
     expect(handler).not.toHaveBeenCalled();
   });
 
   it("handler가 몇 번 실패하다 성공하면 재시도 후 정상 처리되고 DLQ로 가지 않는다", async () => {
     const { kafka, emit, dlqProducerObj } = createFakeKafka();
-    const consumer = new StandardConsumer(kafka, "test-group");
-    activeConsumers.push(consumer);
+    const consumer = createConsumer(kafka);
 
     let attempts = 0;
     const handler = vi.fn().mockImplementation(async () => {
@@ -111,7 +129,8 @@ describe("StandardConsumer.subscribe", () => {
     await consumer.subscribe(OrderCreated, handler, {
       retry: { attempts: 3, initialBackoffMs: 1 },
     });
-    await emit({ orderId: "order-1", amount: 10 });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 });
 
     expect(handler).toHaveBeenCalledTimes(3);
     expect(dlqProducerObj.send).not.toHaveBeenCalled();
@@ -119,15 +138,15 @@ describe("StandardConsumer.subscribe", () => {
 
   it("재시도를 다 소진하면 DLQ로 원본 payload와 에러를 발행한다", async () => {
     const { kafka, emit, dlqProducerObj } = createFakeKafka();
-    const consumer = new StandardConsumer(kafka, "test-group");
-    activeConsumers.push(consumer);
+    const consumer = createConsumer(kafka);
 
     const handler = vi.fn().mockRejectedValue(new Error("영구 실패"));
 
     await consumer.subscribe(OrderCreated, handler, {
       retry: { attempts: 2, initialBackoffMs: 1 },
     });
-    await emit({ orderId: "order-1", amount: 10 });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 });
 
     expect(handler).toHaveBeenCalledTimes(2);
     expect(dlqProducerObj.send).toHaveBeenCalledTimes(1);
@@ -141,15 +160,52 @@ describe("StandardConsumer.subscribe", () => {
 
   it("retry: false면 재시도 없이 한 번만 시도하고 바로 DLQ로 보낸다", async () => {
     const { kafka, emit, dlqProducerObj } = createFakeKafka();
-    const consumer = new StandardConsumer(kafka, "test-group");
-    activeConsumers.push(consumer);
+    const consumer = createConsumer(kafka);
 
     const handler = vi.fn().mockRejectedValue(new Error("실패"));
 
     await consumer.subscribe(OrderCreated, handler, { retry: false });
-    await emit({ orderId: "order-1", amount: 10 });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 });
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(dlqProducerObj.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("한 컨슈머에 여러 토픽을 구독하면 각자 자기 handler로만 라우팅된다", async () => {
+    const { kafka, emit } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const orderHandler = vi.fn();
+    const paymentHandler = vi.fn();
+
+    await consumer.subscribe(OrderCreated, orderHandler);
+    await consumer.subscribe(PaymentCompleted, paymentHandler);
+    await consumer.run();
+
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 });
+    await emit("payment.completed.v1", { paymentId: "payment-1" });
+
+    expect(orderHandler).toHaveBeenCalledTimes(1);
+    expect(orderHandler).toHaveBeenCalledWith({ orderId: "order-1", amount: 10 });
+    expect(paymentHandler).toHaveBeenCalledTimes(1);
+    expect(paymentHandler).toHaveBeenCalledWith({ paymentId: "payment-1" });
+  });
+
+  it("같은 토픽을 두 번 구독하면 예외를 던진다", async () => {
+    const { kafka } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+
+    await consumer.subscribe(OrderCreated, vi.fn());
+    await expect(consumer.subscribe(OrderCreated, vi.fn())).rejects.toThrow();
+  });
+
+  it("run() 이후에 subscribe()를 호출하면 예외를 던진다", async () => {
+    const { kafka } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+
+    await consumer.subscribe(OrderCreated, vi.fn());
+    await consumer.run();
+
+    await expect(consumer.subscribe(PaymentCompleted, vi.fn())).rejects.toThrow();
   });
 });
