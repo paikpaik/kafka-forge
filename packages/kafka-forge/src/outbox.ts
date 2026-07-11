@@ -1,4 +1,6 @@
 import type { Kafka, Producer } from "kafkajs";
+import { withProducerSpan } from "./tracing";
+import { producedTotal, produceErrorsTotal } from "./metrics";
 
 export interface OutboxRecord {
   id: string | number;
@@ -35,11 +37,21 @@ export class OutboxPublisher {
     const publishedIds: Array<string | number> = [];
 
     for (const record of pending) {
-      await this.producer.send({
-        topic: record.topic,
-        messages: [{ key: record.key, value: JSON.stringify(record.payload) }],
-      });
-      publishedIds.push(record.id);
+      try {
+        await withProducerSpan(record.topic, async (traceHeaders) => {
+          await this.producer.send({
+            topic: record.topic,
+            messages: [
+              { key: record.key, value: JSON.stringify(record.payload), headers: traceHeaders },
+            ],
+          });
+        });
+        producedTotal.inc({ topic: record.topic });
+        publishedIds.push(record.id);
+      } catch (err) {
+        produceErrorsTotal.inc({ topic: record.topic });
+        throw err;
+      }
     }
 
     if (publishedIds.length > 0) {

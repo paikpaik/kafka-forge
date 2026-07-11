@@ -23,7 +23,9 @@
     "phase3:setup-dlq-topic": "tsx src/phase3/setup-dlq-topic.ts",
     "phase4:build-core": "npm run build -w kafka-forge",
     "phase4:order-service": "dotenv -e .env -- npm run start -w order-service",
-    "phase4:outbox-relay": "dotenv -e .env -- npm run start -w outbox-relay"
+    "phase4:outbox-relay": "dotenv -e .env -- npm run start -w outbox-relay",
+    "phase5:build-core": "npm run build -w kafka-forge",
+    "phase5:benchmark": "tsx src/phase5/run-benchmark.ts"
   },
   "dependencies": {
     "kafkajs": "^2.2.4"

@@ -1,6 +1,8 @@
+import "./tracing";
 import { Kafka } from "kafkajs";
 import { OutboxPublisher } from "kafka-forge";
 import { MySqlOutboxStore } from "./outbox-store";
+import { startMetricsServer } from "./metrics-server";
 
 const kafka = new Kafka({
   clientId: "outbox-relay",
@@ -8,6 +10,7 @@ const kafka = new Kafka({
 });
 
 async function main() {
+  startMetricsServer(9465);
   const store = new MySqlOutboxStore();
   const publisher = new OutboxPublisher(kafka, store);
   await publisher.connect();

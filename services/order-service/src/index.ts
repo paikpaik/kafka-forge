@@ -1,5 +1,7 @@
+import "./tracing";
 import { OrderCreated } from "shared-events";
 import { pool } from "./db";
+import { startMetricsServer } from "./metrics-server";
 
 const runId = Date.now().toString(36);
 let seq = 1;
@@ -32,6 +34,7 @@ async function createOrder() {
 }
 
 async function main() {
+  startMetricsServer(9464);
   setInterval(() => {
     createOrder().catch((err) => console.error("주문 저장 실패:", err));
   }, 1500);

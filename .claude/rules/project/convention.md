@@ -12,7 +12,8 @@
 
 - 워크스페이스 내 다른 패키지를 상대경로(`../../services/...`)로 참조하지 않는다.
 - `node-forge`(forge 시리즈의 다른 모듈)를 직접 의존하지 않는다. Kafka는 선택적 인프라이므로, kafka-forge를 쓰기 위해 다른 forge 모듈이 강제되면 안 된다 (레포간 `.claude-ops`/`memory`의 `forge-series-direction` 기록 참고).
-- 저장소가 필요한 확장 지점(예: 멱등성 저장소)은 인터페이스만 제공하고 구현체는 강제하지 않는다.
+- 저장소가 필요한 확장 지점(예: 멱등성 저장소, Outbox 저장소)은 인터페이스만 제공하고 구현체는 강제하지 않는다.
+- 계측용 경량 API(`@opentelemetry/api`, `prom-client`)는 코어 의존성으로 허용한다. 다만 실제 배선(OTel SDK/Exporter 초기화, `/metrics` HTTP 서버)은 서비스 책임으로 남기고 코어가 직접 만들지 않는다.
 
 ## 레퍼런스 서비스(`services/*`)
 

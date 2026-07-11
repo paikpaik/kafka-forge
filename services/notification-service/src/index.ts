@@ -1,6 +1,8 @@
+import "./tracing";
 import { Kafka } from "kafkajs";
 import { StandardConsumer, InMemoryIdempotencyStore } from "kafka-forge";
 import { OrderCreated } from "shared-events";
+import { startMetricsServer } from "./metrics-server";
 
 const kafka = new Kafka({
   clientId: "notification-service",
@@ -8,6 +10,7 @@ const kafka = new Kafka({
 });
 
 async function main() {
+  startMetricsServer(9466);
   const consumer = new StandardConsumer(kafka, "notification-service");
   await consumer.connect();
   consumer.registerShutdown();

@@ -8,3 +8,4 @@ export { InMemoryIdempotencyStore } from "./idempotency";
 export type { IdempotencyStore } from "./idempotency";
 export { OutboxPublisher } from "./outbox";
 export type { OutboxRecord, OutboxStore } from "./outbox";
+export { metricsRegistry } from "./metrics";

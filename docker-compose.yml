@@ -57,3 +57,44 @@ services:
       - redpanda_network
     depends_on:
       - redpanda
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # http://localhost:16686 — 트레이스 웹 UI
+      - "4317:4317" # OTLP gRPC (서비스가 스팬을 보내는 포트)
+      - "4318:4318" # OTLP HTTP
+    networks:
+      - redpanda_network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./scripts/kafka_forge/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090" # http://localhost:9090 — Prometheus 자체 쿼리 UI
+    networks:
+      - redpanda_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./scripts/kafka_forge/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./scripts/kafka_forge/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000" # http://localhost:3001 — Grafana 대시보드
+    networks:
+      - redpanda_network
+    depends_on:
+      - prometheus

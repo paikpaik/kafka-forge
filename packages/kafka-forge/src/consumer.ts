@@ -3,6 +3,8 @@ import type { z, ZodType } from "zod";
 import type { EventContract } from "./event-contract";
 import type { IdempotencyStore } from "./idempotency";
 import { toDlqTopicName } from "./topic-name";
+import { withConsumerSpan } from "./tracing";
+import { consumedTotal, consumeErrorsTotal, consumeDurationSeconds, consumerLag } from "./metrics";
 
 export interface RetryOptions {
   attempts: number;
@@ -10,6 +12,7 @@ export interface RetryOptions {
 }
 
 const DEFAULT_RETRY: RetryOptions = { attempts: 3, initialBackoffMs: 1000 };
+const LAG_POLL_INTERVAL_MS = 10000;
 
 export interface SubscribeOptions {
   retry?: RetryOptions | false;
@@ -22,11 +25,14 @@ function sleep(ms: number): Promise<void> {
 
 export class StandardConsumer {
   private readonly kafka: Kafka;
+  private readonly groupId: string;
   private readonly consumer: Consumer;
   private dlqProducer: Producer | null = null;
+  private lagPollTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(kafka: Kafka, groupId: string) {
     this.kafka = kafka;
+    this.groupId = groupId;
     this.consumer = kafka.consumer({ groupId });
   }
 
@@ -35,6 +41,10 @@ export class StandardConsumer {
   }
 
   async disconnect(): Promise<void> {
+    if (this.lagPollTimer) {
+      clearInterval(this.lagPollTimer);
+      this.lagPollTimer = null;
+    }
     await this.consumer.disconnect();
     if (this.dlqProducer) {
       await this.dlqProducer.disconnect();
@@ -58,6 +68,7 @@ export class StandardConsumer {
     const retry = options.retry === false ? null : { ...DEFAULT_RETRY, ...options.retry };
 
     await this.consumer.subscribe({ topic: event.topic, fromBeginning: true });
+    this.startLagPolling(event.topic);
 
     await this.consumer.run({
       eachMessage: async ({ partition, message }) => {
@@ -79,7 +90,18 @@ export class StandardConsumer {
           return;
         }
 
-        await this.runWithRetry(event, parsed.data, handler, retry);
+        await withConsumerSpan(event.topic, message.headers ?? {}, async () => {
+          const stopTimer = consumeDurationSeconds.startTimer({
+            topic: event.topic,
+            group: this.groupId,
+          });
+          try {
+            await this.runWithRetry(event, parsed.data, handler, retry);
+            consumedTotal.inc({ topic: event.topic, group: this.groupId });
+          } finally {
+            stopTimer();
+          }
+        });
 
         if (options.idempotencyStore) {
           await options.idempotencyStore.markProcessed(idempotencyKey);
@@ -116,6 +138,7 @@ export class StandardConsumer {
       }
     }
 
+    consumeErrorsTotal.inc({ topic: event.topic, group: this.groupId });
     await this.sendToDlq(event, payload, lastError);
   }
 
@@ -143,5 +166,34 @@ export class StandardConsumer {
     });
 
     console.error(`[StandardConsumer] 최종 실패, DLQ로 이동: topic=${event.topic}`);
+  }
+
+  private startLagPolling(topic: string): void {
+    const admin = this.kafka.admin();
+    let connected = false;
+
+    this.lagPollTimer = setInterval(async () => {
+      try {
+        if (!connected) {
+          await admin.connect();
+          connected = true;
+        }
+
+        const topicOffsets = await admin.fetchTopicOffsets(topic);
+        const highWatermarks = new Map(topicOffsets.map((o) => [o.partition, Number(o.offset)]));
+
+        const groupOffsets = await admin.fetchOffsets({ groupId: this.groupId, topics: [topic] });
+        for (const { partitions } of groupOffsets) {
+          for (const { partition, offset } of partitions) {
+            const highWatermark = highWatermarks.get(partition) ?? 0;
+            const committed = Number(offset);
+            const lag = Math.max(highWatermark - committed, 0);
+            consumerLag.set({ topic, group: this.groupId, partition: String(partition) }, lag);
+          }
+        }
+      } catch (err) {
+        console.error("[StandardConsumer] 랙 조회 실패:", (err as Error).message);
+      }
+    }, LAG_POLL_INTERVAL_MS);
   }
 }
