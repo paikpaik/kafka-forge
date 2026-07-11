@@ -3,7 +3,7 @@ import type { z, ZodType } from "zod";
 import type { EventContract } from "./event-contract";
 import type { IdempotencyStore } from "./idempotency";
 import { toDlqTopicName } from "./topic-name";
-import { withConsumerSpan } from "./tracing";
+import { withConsumerSpan, withProducerSpan } from "./tracing";
 import { consumedTotal, consumeErrorsTotal, consumeDurationSeconds, consumerLag } from "./metrics";
 
 export interface RetryOptions {
@@ -117,7 +117,12 @@ export class StandardConsumer {
     retry: RetryOptions | null,
   ): Promise<void> {
     if (!retry) {
-      await handler(payload);
+      try {
+        await handler(payload);
+      } catch (err) {
+        consumeErrorsTotal.inc({ topic: event.topic, group: this.groupId });
+        await this.sendToDlq(event, payload, err);
+      }
       return;
     }
 
@@ -152,17 +157,22 @@ export class StandardConsumer {
       await this.dlqProducer.connect();
     }
 
-    await this.dlqProducer.send({
-      topic: toDlqTopicName(event.topic),
-      messages: [
-        {
-          value: JSON.stringify({
-            payload,
-            error: error instanceof Error ? error.message : String(error),
-            failedAt: new Date().toISOString(),
-          }),
-        },
-      ],
+    const dlqTopic = toDlqTopicName(event.topic);
+    await withProducerSpan(dlqTopic, async (traceHeaders) => {
+      await this.dlqProducer!.send({
+        topic: dlqTopic,
+        messages: [
+          {
+            key: event.partitionKey(payload),
+            headers: traceHeaders,
+            value: JSON.stringify({
+              payload,
+              error: error instanceof Error ? error.message : String(error),
+              failedAt: new Date().toISOString(),
+            }),
+          },
+        ],
+      });
     });
 
     console.error(`[StandardConsumer] 최종 실패, DLQ로 이동: topic=${event.topic}`);

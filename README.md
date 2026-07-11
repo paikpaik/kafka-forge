@@ -69,12 +69,29 @@ await consumer.subscribe(
 | 토픽 네이밍 | `createTopicName(domain, event, version)`이 `<domain>.<event>.v<N>` 컨벤션을 강제 |
 | Event Contract | `defineEvent()`로 토픽/스키마/파티션 키를 한 곳에서만 정의, Producer/Consumer가 공유 |
 | 스키마 검증 | Zod로 발행 전 검증, 실패 시 발행 차단 |
-| 재시도 + DLQ | handler 실패 시 지수 백오프로 재시도(기본 3회), 최종 실패 시 `<topic>.dlq`로 이동 |
+| 재시도 + DLQ | handler 실패 시 지수 백오프로 재시도(기본 3회), 최종 실패 시 `<topic>.dlq`로 이동 (원본 key/trace 헤더 보존) |
 | 멱등성 | `IdempotencyStore` 인터페이스 + 인메모리 기본 구현. Redis 등 영속 저장소는 인터페이스를 구현해 직접 연결 |
 | Outbox 패턴 | `OutboxStore` 인터페이스 + `OutboxPublisher`로, DB 트랜잭션과 Kafka 발행 사이의 정합성 문제 해결 |
 | Graceful shutdown | `registerShutdown()` 한 줄로 SIGINT/SIGTERM 시 정상 탈퇴 |
 | 분산 트레이싱 | `@opentelemetry/api` 기반, produce span과 consume span이 Kafka 메시지 헤더를 통해 자동으로 연결됨 |
 | 메트릭 | `prom-client` 기반 공유 Registry(`metricsRegistry`) — 발행/소비 카운터, 처리시간 히스토그램, 컨슈머 랙 게이지 |
+| JSON Schema 내보내기 | `toJsonSchema(event)`로 Zod 스키마를 JSON Schema로 변환 — 다른 언어(Python 등) 서비스가 같은 토픽의 페이로드 구조를 코드젠할 수 있게 함 |
+
+## 폴리글랏 지원 (JSON Schema)
+
+Kafka 메시지는 이미 JSON이라 다른 언어도 그냥 읽을 수 있지만, "이 메시지 모양이 어떻게 생겼는지"는 지금까지 TS 코드를 봐야만 알 수 있었습니다. `toJsonSchema()`로 이 문제를 풉니다:
+
+```ts
+import { toJsonSchema, writeJsonSchema } from "kafka-forge";
+import { OrderCreated } from "./events";
+
+const jsonSchema = toJsonSchema(OrderCreated);
+// { topic: "order.created.v1", schema: { type: "object", properties: {...}, required: [...] } }
+
+writeJsonSchema(OrderCreated, "./schemas/order-created.schema.json");
+```
+
+이렇게 내보낸 `.schema.json` 파일을 공유 위치(git 저장소, 사내 문서 등)에 두면, Python 같은 다른 언어 서비스가 `datamodel-code-generator` 같은 도구로 타입/검증 모델을 자동 생성할 수 있습니다. 와이어 포맷(JSON)이나 기존 TS 코드는 전혀 바뀌지 않는 가벼운 방법입니다 — Schema Registry(Avro/Protobuf)처럼 바이너리 포맷과 별도 인프라가 필요한 무거운 대안도 있지만, 실제로 폴리글랏 소비자가 생기기 전까지는 이 정도로 충분합니다.
 
 ## 설계 원칙
 
@@ -87,6 +104,7 @@ await consumer.subscribe(
 ```bash
 docker compose up -d   # Redpanda(로컬 Kafka 호환 브로커) + 웹 콘솔(localhost:8080)
 npm install
+npm test               # vitest, 실제 브로커 없이 fake kafkajs로 검증
 npm run build
 ```
 

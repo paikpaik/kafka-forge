@@ -48,20 +48,25 @@ kafka-forge/
 │   ├── idempotency.ts       IdempotencyStore 인터페이스
 │   ├── outbox.ts            OutboxStore 인터페이스, OutboxPublisher
 │   ├── tracing.ts           OTel span 생성/context 전파
-│   └── metrics.ts           prom-client Registry, 카운터/히스토그램/게이지
+│   ├── metrics.ts           prom-client Registry, 카운터/히스토그램/게이지
+│   ├── schema-export.ts     Zod → JSON Schema 변환 (폴리글랏 지원)
+│   └── *.test.ts            모듈별 유닛테스트 (vitest, fake kafkajs로 검증)
 ├── README.md
 └── LICENSE
 ```
 
 ---
 
-## 빌드
+## 빌드 / 테스트
 
 ```bash
 npm install
-npm run build       # dist 생성
-docker compose up -d   # 로컬 테스트용 Redpanda + Console
+npm test             # vitest, 실제 브로커 없이 fake kafkajs로 검증
+npm run build         # dist 생성 (테스트 파일은 tsconfig exclude로 빠짐)
+docker compose up -d  # 로컬 통합 확인용 Redpanda + Console
 ```
+
+새 기능을 추가할 때는 유닛테스트를 같이 작성한다 (`src/*.test.ts`). kafkajs의 `Producer`/`Consumer`/`Admin`은 필요한 메서드만 만족하는 fake 객체로 대체하고, 실제 브로커 연결 없이 로직만 검증한다.
 
 ---
 
