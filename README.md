@@ -108,6 +108,8 @@ await consumer.subscribe(OrderCreated, handler, {
 });
 ```
 
+멱등성으로 걸러진 메시지 수는 `IdempotencyStore` 구현체(Redis, DB 등)와 무관하게 `kafka_forge_deduped_total{topic,group}` 카운터로 표준화되어 잡힙니다 — 구현체마다 각자 지표를 재지 않아도 여러 서비스를 같은 대시보드에서 비교할 수 있습니다.
+
 ## 핵심 기능
 
 | 기능 | 설명 |
@@ -120,7 +122,7 @@ await consumer.subscribe(OrderCreated, handler, {
 | Outbox 패턴 | `OutboxStore` 인터페이스 + `OutboxPublisher`로, DB 트랜잭션과 Kafka 발행 사이의 정합성 문제 해결 |
 | Graceful shutdown | `registerShutdown()` 한 줄로 SIGINT/SIGTERM 시 정상 탈퇴 |
 | 분산 트레이싱 | `@opentelemetry/api` 기반, produce span과 consume span이 Kafka 메시지 헤더를 통해 자동으로 연결됨 |
-| 메트릭 | `prom-client` 기반 공유 Registry(`metricsRegistry`) — 발행/소비 카운터, 처리시간 히스토그램, 컨슈머 랙 게이지 |
+| 메트릭 | `prom-client` 기반 공유 Registry(`metricsRegistry`) — 발행/소비/멱등성 중복 스킵 카운터, 처리시간 히스토그램, 컨슈머 랙 게이지. `registerMetricsInto()`로 서비스 자체 Registry에도 합쳐서 노출 가능 |
 | JSON Schema 내보내기 | `toJsonSchema(event)`로 Zod 스키마를 JSON Schema로 변환 — 다른 언어(Python 등) 서비스가 같은 토픽의 페이로드 구조를 코드젠할 수 있게 함 |
 
 ## 폴리글랏 지원 (JSON Schema)
@@ -142,7 +144,13 @@ writeJsonSchema(OrderCreated, "./schemas/order-created.schema.json");
 ## 설계 원칙
 
 - **DB/저장소 비의존**: `IdempotencyStore`, `OutboxStore`는 인터페이스만 제공하고 구현체(Redis, MySQL 등)는 강제하지 않습니다.
-- **계측 SDK/서버 비의존**: `@opentelemetry/api`, `prom-client`는 코어가 직접 의존하지만, 실제 OTel Exporter 설정이나 `/metrics` HTTP 서버는 이 라이브러리를 쓰는 서비스가 직접 구성합니다.
+- **계측 SDK/서버 비의존**: `@opentelemetry/api`, `prom-client`는 코어가 직접 의존하지만, 실제 OTel Exporter 설정이나 `/metrics` HTTP 서버는 이 라이브러리를 쓰는 서비스가 직접 구성합니다. 서비스가 이미 자체 Registry로 `/metrics`를 서빙하고 있다면, `registerMetricsInto()`로 kafka-forge 지표를 그 Registry에 합쳐서 엔드포인트 하나로 노출할 수 있습니다.
+
+  ```ts
+  import { registerMetricsInto } from "@paikpaik/kafka-forge";
+
+  registerMetricsInto(myServiceRegistry); // 이후 기존 /metrics 응답에 kafka_forge_* 지표도 포함됨
+  ```
 - **프레임워크 비의존**: NestJS, Fastify, Express 등 특정 프레임워크에 종속되지 않습니다.
 
 ## 로컬 개발

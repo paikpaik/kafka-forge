@@ -44,3 +44,29 @@ export const consumerLag = new Gauge({
   labelNames: ["topic", "group", "partition"],
   registers: [metricsRegistry],
 });
+
+export const dedupedTotal = new Counter({
+  name: "kafka_forge_deduped_total",
+  help: "IdempotencyStore에 의해 중복으로 판정되어 스킵된 메시지 수",
+  labelNames: ["topic", "group"],
+  registers: [metricsRegistry],
+});
+
+const allMetrics = [
+  producedTotal,
+  produceErrorsTotal,
+  consumedTotal,
+  consumeErrorsTotal,
+  consumeDurationSeconds,
+  consumerLag,
+  dedupedTotal,
+];
+
+/**
+ * kafka-forge 지표들을 외부 Registry에도 등록한다. 기존 metricsRegistry로의 노출은
+ * 그대로 유지되므로(하위 호환), 소비 서비스가 자기 Registry와 합쳐서 하나의
+ * `/metrics` 엔드포인트로 노출하고 싶을 때 초기화 시 한 번 호출하면 된다.
+ */
+export function registerMetricsInto(registry: Registry): void {
+  allMetrics.forEach((metric) => registry.registerMetric(metric));
+}
