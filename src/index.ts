@@ -8,7 +8,7 @@ export { InMemoryIdempotencyStore } from "./idempotency";
 export type { IdempotencyStore } from "./idempotency";
 export { OutboxPublisher } from "./outbox";
 export type { OutboxRecord, OutboxStore } from "./outbox";
-export { metricsRegistry } from "./metrics";
+export { metricsRegistry, registerMetricsInto } from "./metrics";
 export { toJsonSchema, writeJsonSchema } from "./schema-export";
 export type { JsonSchemaExport } from "./schema-export";
 export { NonRetryableError } from "./errors";

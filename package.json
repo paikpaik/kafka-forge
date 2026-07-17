@@ -1,6 +1,6 @@
 {
   "name": "@paikpaik/kafka-forge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "여러 서비스가 표준화된 방식으로 Kafka를 쓸 수 있게 해주는 코어 모듈 (토픽 네이밍 컨벤션, 스키마 검증, 파티션 키 전략)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

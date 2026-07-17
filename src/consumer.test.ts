@@ -5,6 +5,7 @@ import { StandardConsumer } from "./consumer";
 import { defineEvent } from "./event-contract";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { NonRetryableError } from "./errors";
+import { dedupedTotal } from "./metrics";
 
 type EachMessageHandler = (args: {
   topic: string;
@@ -119,6 +120,30 @@ describe("StandardConsumer.subscribe/run", () => {
     );
 
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("멱등성 스토어에 의해 스킵되면 kafka_forge_deduped_total이 증가한다", async () => {
+    const { kafka, emit } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const idempotencyStore = new InMemoryIdempotencyStore();
+    await idempotencyStore.markProcessed("order.created.v1:0:0");
+
+    const before = (await dedupedTotal.get()).values.find(
+      (v) => v.labels.topic === "order.created.v1" && v.labels.group === "test-group",
+    )?.value ?? 0;
+
+    await consumer.subscribe(OrderCreated, vi.fn(), { idempotencyStore });
+    await consumer.run();
+    await emit(
+      "order.created.v1",
+      { orderId: "order-1", amount: 10 },
+      { partition: 0, offset: "0" },
+    );
+
+    const after = (await dedupedTotal.get()).values.find(
+      (v) => v.labels.topic === "order.created.v1" && v.labels.group === "test-group",
+    )?.value ?? 0;
+    expect(after - before).toBe(1);
   });
 
   it("dedupeKey를 넘기면 offset이 달라도 같은 비즈니스 키면 중복으로 스킵한다", async () => {

@@ -3,3 +3,6 @@ dist/
 *.log
 
 forge
+
+# 수정 제안서
+proposals

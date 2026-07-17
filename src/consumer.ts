@@ -5,7 +5,13 @@ import type { IdempotencyStore } from "./idempotency";
 import { toDlqTopicName } from "./topic-name";
 import { NonRetryableError } from "./errors";
 import { withConsumerSpan, withProducerSpan } from "./tracing";
-import { consumedTotal, consumeErrorsTotal, consumeDurationSeconds, consumerLag } from "./metrics";
+import {
+  consumedTotal,
+  consumeErrorsTotal,
+  consumeDurationSeconds,
+  consumerLag,
+  dedupedTotal,
+} from "./metrics";
 
 export interface RetryOptions {
   attempts: number;
@@ -172,6 +178,7 @@ export class StandardConsumer {
       ? `${event.topic}:${dedupeKey(parsed.data)}`
       : `${event.topic}:${partition}:${message.offset}`;
     if (idempotencyStore && (await idempotencyStore.wasProcessed(idempotencyKey))) {
+      dedupedTotal.inc({ topic: event.topic, group: this.groupId });
       console.log(`[StandardConsumer] 이미 처리된 메시지, 스킵: ${idempotencyKey}`);
       return;
     }
