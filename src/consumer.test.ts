@@ -128,9 +128,10 @@ describe("StandardConsumer.subscribe/run", () => {
     const idempotencyStore = new InMemoryIdempotencyStore();
     await idempotencyStore.markProcessed("order.created.v1:0:0");
 
-    const before = (await dedupedTotal.get()).values.find(
-      (v) => v.labels.topic === "order.created.v1" && v.labels.group === "test-group",
-    )?.value ?? 0;
+    const before =
+      (await dedupedTotal.get()).values.find(
+        (v) => v.labels.topic === "order.created.v1" && v.labels.group === "test-group",
+      )?.value ?? 0;
 
     await consumer.subscribe(OrderCreated, vi.fn(), { idempotencyStore });
     await consumer.run();
@@ -140,9 +141,10 @@ describe("StandardConsumer.subscribe/run", () => {
       { partition: 0, offset: "0" },
     );
 
-    const after = (await dedupedTotal.get()).values.find(
-      (v) => v.labels.topic === "order.created.v1" && v.labels.group === "test-group",
-    )?.value ?? 0;
+    const after =
+      (await dedupedTotal.get()).values.find(
+        (v) => v.labels.topic === "order.created.v1" && v.labels.group === "test-group",
+      )?.value ?? 0;
     expect(after - before).toBe(1);
   });
 

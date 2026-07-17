@@ -27,7 +27,9 @@ describe("registerMetricsInto", () => {
 
     const value = await dedupedTotal.get();
     expect(
-      value.values.some((v) => v.labels.topic === "order.created.v1" && v.labels.group === "test-group"),
+      value.values.some(
+        (v) => v.labels.topic === "order.created.v1" && v.labels.group === "test-group",
+      ),
     ).toBe(true);
   });
 });
