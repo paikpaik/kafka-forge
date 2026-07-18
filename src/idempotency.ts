@@ -1,6 +1,14 @@
 export interface IdempotencyStore {
   wasProcessed(key: string): Promise<boolean>;
   markProcessed(key: string): Promise<void>;
+  /**
+   * (선택) 원자적으로 "처리 시작"을 선점한다. true를 반환하면 이 호출자가 처음이므로 진행해야
+   * 하고, false면 이미 선점(또는 완료)된 상태이므로 핸들러를 실행하지 말아야 한다. 구현되어
+   * 있으면 StandardConsumer는 이걸 핸들러 실행 *전*에 호출해서, "이펙트 적용 후 마킹 전"
+   * 크래시 윈도우를 없앤다. 구현하지 않으면(하위 호환) 기존 wasProcessed/markProcessed(사후)
+   * 방식을 그대로 사용한다.
+   */
+  claim?(key: string): Promise<boolean>;
 }
 
 export interface InMemoryIdempotencyStoreOptions {
@@ -41,6 +49,12 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
   async markProcessed(key: string): Promise<void> {
     const expiresAt = this.ttlMs ? Date.now() + this.ttlMs : Number.POSITIVE_INFINITY;
     this.processed.set(key, expiresAt);
+  }
+
+  async claim(key: string): Promise<boolean> {
+    if (await this.wasProcessed(key)) return false;
+    await this.markProcessed(key);
+    return true;
   }
 
   /** 타이머를 멈춘다 (테스트, 짧게 쓰고 버리는 인스턴스 정리용). */

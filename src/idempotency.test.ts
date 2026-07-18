@@ -19,6 +19,22 @@ describe("InMemoryIdempotencyStore", () => {
     await expect(store.wasProcessed("order.created.v1:0:2")).resolves.toBe(false);
   });
 
+  describe("claim", () => {
+    it("처음 선점하면 true를 반환하고, 이후 markProcessed 없이도 처리된 것으로 취급한다", async () => {
+      const store = new InMemoryIdempotencyStore();
+
+      await expect(store.claim("order.created.v1:0:1")).resolves.toBe(true);
+      await expect(store.wasProcessed("order.created.v1:0:1")).resolves.toBe(true);
+    });
+
+    it("이미 선점(또는 처리)된 키는 false를 반환한다", async () => {
+      const store = new InMemoryIdempotencyStore();
+      await store.claim("order.created.v1:0:1");
+
+      await expect(store.claim("order.created.v1:0:1")).resolves.toBe(false);
+    });
+  });
+
   describe("ttlMs", () => {
     afterEach(() => {
       vi.useRealTimers();
