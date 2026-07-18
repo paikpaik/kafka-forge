@@ -177,10 +177,15 @@ export class StandardConsumer {
     const idempotencyKey = dedupeKey
       ? `${event.topic}:${dedupeKey(parsed.data)}`
       : `${event.topic}:${partition}:${message.offset}`;
-    if (idempotencyStore && (await idempotencyStore.wasProcessed(idempotencyKey))) {
-      dedupedTotal.inc({ topic: event.topic, group: this.groupId });
-      console.log(`[StandardConsumer] 이미 처리된 메시지, 스킵: ${idempotencyKey}`);
-      return;
+    if (idempotencyStore) {
+      const claimed = idempotencyStore.claim
+        ? await idempotencyStore.claim(idempotencyKey)
+        : !(await idempotencyStore.wasProcessed(idempotencyKey));
+      if (!claimed) {
+        dedupedTotal.inc({ topic: event.topic, group: this.groupId });
+        console.log(`[StandardConsumer] 이미 처리된 메시지, 스킵: ${idempotencyKey}`);
+        return;
+      }
     }
 
     await withConsumerSpan(
@@ -201,7 +206,7 @@ export class StandardConsumer {
       },
     );
 
-    if (idempotencyStore) {
+    if (idempotencyStore && !idempotencyStore.claim) {
       await idempotencyStore.markProcessed(idempotencyKey);
     }
   }

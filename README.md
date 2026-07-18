@@ -110,6 +110,18 @@ await consumer.subscribe(OrderCreated, handler, {
 
 멱등성으로 걸러진 메시지 수는 `IdempotencyStore` 구현체(Redis, DB 등)와 무관하게 `kafka_forge_deduped_total{topic,group}` 카운터로 표준화되어 잡힙니다 — 구현체마다 각자 지표를 재지 않아도 여러 서비스를 같은 대시보드에서 비교할 수 있습니다.
 
+기본(`wasProcessed` → handler 실행 → `markProcessed`) 순서는 handler 실행 후 마킹 전에 프로세스가 죽으면 재배달 시 handler가 다시 실행되는 크래시 윈도우가 있습니다. `IdempotencyStore`에 `claim(key)`을 구현하면 `StandardConsumer`가 handler 실행 **전**에 원자적으로 선점을 시도합니다 — `false`가 돌아오면 handler를 아예 실행하지 않고, `true`인 경우 이미 선점 시점에 마킹까지 끝난 것으로 보고 `markProcessed`를 다시 부르지 않습니다. 이펙트가 중복 적용되는 대신 (극단적인 크래시 타이밍에) 유실될 수 있는 트레이드오프이므로, 중복보다 유실이 덜 위험한 이펙트(예: 누적 카운터)에 적합합니다. `claim`을 구현하지 않으면 기존 동작 그대로입니다(하위 호환).
+
+```ts
+class RedisIdempotencyStore implements IdempotencyStore {
+  async wasProcessed(key: string) { /* ... */ }
+  async markProcessed(key: string) { /* ... */ }
+  async claim(key: string): Promise<boolean> {
+    // 예: Redis SET NX PX 기반 분산 락 — 선점에 성공하면 true
+  }
+}
+```
+
 ## 핵심 기능
 
 | 기능 | 설명 |
@@ -118,7 +130,7 @@ await consumer.subscribe(OrderCreated, handler, {
 | Event Contract | `defineEvent()`로 토픽/스키마/파티션 키를 한 곳에서만 정의, Producer/Consumer가 공유 |
 | 스키마 검증 | Zod로 발행 전 검증, 실패 시 발행 차단 |
 | 재시도 + DLQ | handler 실패 시 지수 백오프로 재시도(기본 3회), 최종 실패 시 `<topic>.dlq`로 이동 (원본 key/trace 헤더 보존) |
-| 멱등성 | `IdempotencyStore` 인터페이스 + 인메모리 기본 구현. Redis 등 영속 저장소는 인터페이스를 구현해 직접 연결 |
+| 멱등성 | `IdempotencyStore` 인터페이스 + 인메모리 기본 구현. Redis 등 영속 저장소는 인터페이스를 구현해 직접 연결. 선택적 `claim()`으로 handler 실행 전 원자적 선점 가능(사후 마킹의 크래시 윈도우 제거) |
 | Outbox 패턴 | `OutboxStore` 인터페이스 + `OutboxPublisher`로, DB 트랜잭션과 Kafka 발행 사이의 정합성 문제 해결 |
 | Graceful shutdown | `registerShutdown()` 한 줄로 SIGINT/SIGTERM 시 정상 탈퇴 |
 | 분산 트레이싱 | `@opentelemetry/api` 기반, produce span과 consume span이 Kafka 메시지 헤더를 통해 자동으로 연결됨 |

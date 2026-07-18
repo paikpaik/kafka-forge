@@ -148,6 +148,82 @@ describe("StandardConsumer.subscribe/run", () => {
     expect(after - before).toBe(1);
   });
 
+  it("claim을 구현한 스토어는 handler 실행 전에 claim이 호출되고, false를 반환하면 handler를 전혀 실행하지 않는다", async () => {
+    const { kafka, emit } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const handler = vi.fn();
+    const claim = vi.fn().mockResolvedValue(false);
+    const idempotencyStore = {
+      wasProcessed: vi.fn(),
+      markProcessed: vi.fn(),
+      claim,
+    };
+
+    await consumer.subscribe(OrderCreated, handler, { idempotencyStore });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { offset: "0" });
+
+    expect(claim).toHaveBeenCalledWith("order.created.v1:0:0");
+    expect(handler).not.toHaveBeenCalled();
+    expect(idempotencyStore.wasProcessed).not.toHaveBeenCalled();
+    expect(idempotencyStore.markProcessed).not.toHaveBeenCalled();
+  });
+
+  it("claim이 true를 반환하면 handler를 실행하고, claim으로 이미 마킹됐으므로 markProcessed는 다시 호출하지 않는다", async () => {
+    const { kafka, emit } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const handler = vi.fn();
+    const idempotencyStore = {
+      wasProcessed: vi.fn(),
+      markProcessed: vi.fn(),
+      claim: vi.fn().mockResolvedValue(true),
+    };
+
+    await consumer.subscribe(OrderCreated, handler, { idempotencyStore });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { offset: "0" });
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(idempotencyStore.markProcessed).not.toHaveBeenCalled();
+  });
+
+  it("claim이 true를 반환한 뒤 handler가 재시도까지 실패해 DLQ로 가도 claim을 다시 호출하지 않는다", async () => {
+    const { kafka, emit, dlqProducerObj } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const handler = vi.fn().mockRejectedValue(new Error("영구 실패"));
+    const claim = vi.fn().mockResolvedValue(true);
+    const idempotencyStore = { wasProcessed: vi.fn(), markProcessed: vi.fn(), claim };
+
+    await consumer.subscribe(OrderCreated, handler, {
+      idempotencyStore,
+      retry: { attempts: 2, initialBackoffMs: 1 },
+    });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { offset: "0" });
+
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(dlqProducerObj.send).toHaveBeenCalledTimes(1);
+    expect(idempotencyStore.markProcessed).not.toHaveBeenCalled();
+  });
+
+  it("claim을 구현하지 않은(레거시) 스토어는 기존 wasProcessed/markProcessed 방식으로 동작한다", async () => {
+    const { kafka, emit } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const handler = vi.fn();
+    const idempotencyStore = {
+      wasProcessed: vi.fn().mockResolvedValue(false),
+      markProcessed: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await consumer.subscribe(OrderCreated, handler, { idempotencyStore });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { offset: "0" });
+
+    expect(idempotencyStore.wasProcessed).toHaveBeenCalledWith("order.created.v1:0:0");
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(idempotencyStore.markProcessed).toHaveBeenCalledWith("order.created.v1:0:0");
+  });
+
   it("dedupeKey를 넘기면 offset이 달라도 같은 비즈니스 키면 중복으로 스킵한다", async () => {
     const { kafka, emit } = createFakeKafka();
     const consumer = createConsumer(kafka);
