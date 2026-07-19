@@ -12,6 +12,12 @@ export interface OutboxRecord {
 export interface OutboxStore {
   fetchPending(limit: number): Promise<OutboxRecord[]>;
   markPublished(ids: Array<string | number>): Promise<void>;
+  /**
+   * (선택) 발행 실패를 통보한다. 구현하지 않으면(하위 호환) 호출되지 않고 지금처럼 계속
+   * 재시도된다. "몇 번 실패하면 포기할지", "포기한 레코드를 어떻게 할지"는 이 메서드
+   * 안에서 store가 전적으로 결정한다 — OutboxPublisher는 관여하지 않는다.
+   */
+  markFailed?(id: string | number, error: unknown): Promise<void>;
 }
 
 export class OutboxPublisher {
@@ -51,7 +57,20 @@ export class OutboxPublisher {
         publishedIds.push(record.id);
       } catch (err) {
         produceErrorsTotal.inc({ topic: record.topic });
-        throw err;
+        console.error(
+          `[OutboxPublisher] 발행 실패, 다음 폴링에서 재시도: id=${record.id} topic=${record.topic}`,
+          err instanceof Error ? err.message : String(err),
+        );
+        // 던지지 않고 다음 레코드로 계속 진행한다 — 이 레코드의 실패가 앞서 성공한 레코드의
+        // markPublished를 막거나, 뒤에 남은 레코드의 시도를 막으면 안 된다.
+        try {
+          await this.store.markFailed?.(record.id, err);
+        } catch (hookErr) {
+          console.error(
+            `[OutboxPublisher] markFailed 훅 실패: id=${record.id}`,
+            hookErr instanceof Error ? hookErr.message : String(hookErr),
+          );
+        }
       }
     }
 

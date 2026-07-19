@@ -141,6 +141,20 @@ await consumer.subscribe(OrderCreatedDlq, async (envelope) => {
 });
 ```
 
+`OutboxPublisher.publishPending()`은 배치 안에서 레코드 하나가 발행에 실패해도 나머지 레코드의 발행을 막지 않습니다 — 그 전에 성공한 레코드는 항상 `markPublished`로 커밋되고(중복 발행 방지), 실패한 레코드 뒤에 남은 레코드도 계속 시도됩니다(헤드-오프-라인 블로킹 방지). 실패는 던지지 않고 `kafka_forge_produce_errors_total` 지표와 로그로만 노출되며, 반환값은 이번 호출에서 실제로 발행에 성공한 레코드 수입니다.
+
+영구적으로 실패하는 레코드를 격리하고 싶으면 `OutboxStore`에 `markFailed`를 구현합니다 — "몇 번 실패하면 포기할지", "포기한 레코드를 어떻게 할지"(삭제/보관/알림)는 전적으로 구현체 책임입니다(`IdempotencyStore`의 `claim`/`release`와 같은 설계):
+
+```ts
+class TypeormOutboxStore implements OutboxStore {
+  async fetchPending(limit: number) { /* ... */ }
+  async markPublished(ids: Array<string | number>) { /* ... */ }
+  async markFailed(id: string | number, error: unknown): Promise<void> {
+    // 예: 실패 횟수를 컬럼에 누적하고, N번 넘으면 별도 테이블로 격리해 fetchPending 대상에서 제외
+  }
+}
+```
+
 ## 핵심 기능
 
 | 기능 | 설명 |
@@ -150,7 +164,7 @@ await consumer.subscribe(OrderCreatedDlq, async (envelope) => {
 | 스키마 검증 | Zod로 발행 전 검증, 실패 시 발행 차단 |
 | 재시도 + DLQ | handler 실패 시 지수 백오프로 재시도(기본 3회), 최종 실패 시 `<topic>.dlq`로 이동 (원본 key/trace 헤더 보존). `defineDlqEvent()`로 DLQ 토픽의 EventContract를 원본으로부터 바로 생성 |
 | 멱등성 | `IdempotencyStore` 인터페이스 + 인메모리 기본 구현. Redis 등 영속 저장소는 인터페이스를 구현해 직접 연결. 선택적 `claim()`으로 handler 실행 전 원자적 선점(사후 마킹의 크래시 윈도우 제거), `release()`로 DLQ행 시 선점 되돌리기 |
-| Outbox 패턴 | `OutboxStore` 인터페이스 + `OutboxPublisher`로, DB 트랜잭션과 Kafka 발행 사이의 정합성 문제 해결 |
+| Outbox 패턴 | `OutboxStore` 인터페이스 + `OutboxPublisher`로, DB 트랜잭션과 Kafka 발행 사이의 정합성 문제 해결. 배치 중 하나가 실패해도 나머지는 계속 발행(헤드-오프-라인 블로킹 방지), 선택적 `markFailed()`로 영구 실패 레코드 격리 |
 | Graceful shutdown | `registerShutdown()` 한 줄로 SIGINT/SIGTERM 시 정상 탈퇴 |
 | 분산 트레이싱 | `@opentelemetry/api` 기반, produce span과 consume span이 Kafka 메시지 헤더를 통해 자동으로 연결됨 |
 | 메트릭 | `prom-client` 기반 공유 Registry(`metricsRegistry`) — 발행/소비(시도+성공 `consumedTotal`, 순수 성공만 `handledTotal`)/멱등성 중복 스킵 카운터, 처리시간 히스토그램, 컨슈머 랙 게이지. `registerMetricsInto()`로 서비스 자체 Registry에도 합쳐서 노출 가능 |
