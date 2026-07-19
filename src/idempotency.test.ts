@@ -35,6 +35,18 @@ describe("InMemoryIdempotencyStore", () => {
     });
   });
 
+  describe("release", () => {
+    it("release 이후에는 같은 키를 다시 claim할 수 있다", async () => {
+      const store = new InMemoryIdempotencyStore();
+      await store.claim("order.created.v1:0:1");
+
+      await store.release("order.created.v1:0:1");
+
+      await expect(store.wasProcessed("order.created.v1:0:1")).resolves.toBe(false);
+      await expect(store.claim("order.created.v1:0:1")).resolves.toBe(true);
+    });
+  });
+
   describe("ttlMs", () => {
     afterEach(() => {
       vi.useRealTimers();

@@ -112,6 +112,8 @@ await consumer.subscribe(OrderCreated, handler, {
 
 기본(`wasProcessed` → handler 실행 → `markProcessed`) 순서는 handler 실행 후 마킹 전에 프로세스가 죽으면 재배달 시 handler가 다시 실행되는 크래시 윈도우가 있습니다. `IdempotencyStore`에 `claim(key)`을 구현하면 `StandardConsumer`가 handler 실행 **전**에 원자적으로 선점을 시도합니다 — `false`가 돌아오면 handler를 아예 실행하지 않고, `true`인 경우 이미 선점 시점에 마킹까지 끝난 것으로 보고 `markProcessed`를 다시 부르지 않습니다. 이펙트가 중복 적용되는 대신 (극단적인 크래시 타이밍에) 유실될 수 있는 트레이드오프이므로, 중복보다 유실이 덜 위험한 이펙트(예: 누적 카운터)에 적합합니다. `claim`을 구현하지 않으면 기존 동작 그대로입니다(하위 호환).
 
+`claim`으로 선점한 메시지가 재시도까지 모두 실패해 DLQ로 이동하면, `IdempotencyStore`에 `release(key)`를 구현해뒀을 경우 `StandardConsumer`가 그 선점을 되돌립니다 — 안 그러면 한 번도 성공한 적 없는 메시지가 "이미 처리됨"으로 영구히 남아, DLQ 재발행이라는 가장 흔한 운영 패턴이 막힙니다. handler가 성공한 경우에는 `release`를 호출하지 않습니다(성공한 메시지의 선점은 그대로 유지돼야 크래시 윈도우 문제가 재발하지 않습니다).
+
 ```ts
 class RedisIdempotencyStore implements IdempotencyStore {
   async wasProcessed(key: string) { /* ... */ }
@@ -119,7 +121,24 @@ class RedisIdempotencyStore implements IdempotencyStore {
   async claim(key: string): Promise<boolean> {
     // 예: Redis SET NX PX 기반 분산 락 — 선점에 성공하면 true
   }
+  async release(key: string): Promise<void> {
+    // claim에 쓴 락 키를 지운다 — DLQ로 간 메시지는 재발행 시 다시 처리할 수 있어야 하므로
+  }
 }
+```
+
+DLQ로 이동한 메시지를 사람이 확인하거나 별도 컨슈머로 재처리하고 싶으면, 원본 이벤트로부터 DLQ용 계약을 바로 만들 수 있습니다 — `toDlqTopicName()`이 만드는 `<topic>.dlq`는 세그먼트가 3개라 `defineEvent()`의 토픽 네이밍 검증을 통과하지 못하므로, `defineDlqEvent()`가 그 검증을 건너뛰고 `{ payload, error, failedAt }` envelope 스키마까지 대신 만들어줍니다:
+
+```ts
+import { defineDlqEvent } from "@paikpaik/kafka-forge";
+import { OrderCreated } from "./events";
+
+export const OrderCreatedDlq = defineDlqEvent(OrderCreated);
+// topic: "order.created.v1.dlq", schema: { payload: <OrderCreated 스키마>, error: string, failedAt: string }
+
+await consumer.subscribe(OrderCreatedDlq, async (envelope) => {
+  console.error(`DLQ 이벤트: ${envelope.error}`, envelope.payload);
+});
 ```
 
 ## 핵심 기능
@@ -129,12 +148,12 @@ class RedisIdempotencyStore implements IdempotencyStore {
 | 토픽 네이밍 | `createTopicName(domain, event, version)`이 `<domain>.<event>.v<N>` 컨벤션을 강제 |
 | Event Contract | `defineEvent()`로 토픽/스키마/파티션 키를 한 곳에서만 정의, Producer/Consumer가 공유 |
 | 스키마 검증 | Zod로 발행 전 검증, 실패 시 발행 차단 |
-| 재시도 + DLQ | handler 실패 시 지수 백오프로 재시도(기본 3회), 최종 실패 시 `<topic>.dlq`로 이동 (원본 key/trace 헤더 보존) |
-| 멱등성 | `IdempotencyStore` 인터페이스 + 인메모리 기본 구현. Redis 등 영속 저장소는 인터페이스를 구현해 직접 연결. 선택적 `claim()`으로 handler 실행 전 원자적 선점 가능(사후 마킹의 크래시 윈도우 제거) |
+| 재시도 + DLQ | handler 실패 시 지수 백오프로 재시도(기본 3회), 최종 실패 시 `<topic>.dlq`로 이동 (원본 key/trace 헤더 보존). `defineDlqEvent()`로 DLQ 토픽의 EventContract를 원본으로부터 바로 생성 |
+| 멱등성 | `IdempotencyStore` 인터페이스 + 인메모리 기본 구현. Redis 등 영속 저장소는 인터페이스를 구현해 직접 연결. 선택적 `claim()`으로 handler 실행 전 원자적 선점(사후 마킹의 크래시 윈도우 제거), `release()`로 DLQ행 시 선점 되돌리기 |
 | Outbox 패턴 | `OutboxStore` 인터페이스 + `OutboxPublisher`로, DB 트랜잭션과 Kafka 발행 사이의 정합성 문제 해결 |
 | Graceful shutdown | `registerShutdown()` 한 줄로 SIGINT/SIGTERM 시 정상 탈퇴 |
 | 분산 트레이싱 | `@opentelemetry/api` 기반, produce span과 consume span이 Kafka 메시지 헤더를 통해 자동으로 연결됨 |
-| 메트릭 | `prom-client` 기반 공유 Registry(`metricsRegistry`) — 발행/소비/멱등성 중복 스킵 카운터, 처리시간 히스토그램, 컨슈머 랙 게이지. `registerMetricsInto()`로 서비스 자체 Registry에도 합쳐서 노출 가능 |
+| 메트릭 | `prom-client` 기반 공유 Registry(`metricsRegistry`) — 발행/소비(시도+성공 `consumedTotal`, 순수 성공만 `handledTotal`)/멱등성 중복 스킵 카운터, 처리시간 히스토그램, 컨슈머 랙 게이지. `registerMetricsInto()`로 서비스 자체 Registry에도 합쳐서 노출 가능 |
 | JSON Schema 내보내기 | `toJsonSchema(event)`로 Zod 스키마를 JSON Schema로 변환 — 다른 언어(Python 등) 서비스가 같은 토픽의 페이로드 구조를 코드젠할 수 있게 함 |
 
 ## 폴리글랏 지원 (JSON Schema)

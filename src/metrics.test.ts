@@ -12,6 +12,7 @@ describe("registerMetricsInto", () => {
     const exported = await externalRegistry.metrics();
     expect(exported).toContain("kafka_forge_produced_total");
     expect(exported).toContain("kafka_forge_deduped_total");
+    expect(exported).toContain("kafka_forge_handled_total");
   });
 
   it("호출 이후에도 기존 metricsRegistry는 그대로 동작한다(하위 호환)", async () => {
