@@ -18,7 +18,9 @@ export const produceErrorsTotal = new Counter({
 
 export const consumedTotal = new Counter({
   name: "kafka_forge_consumed_total",
-  help: "정상 처리된 메시지 수",
+  help:
+    "처리를 시도한 메시지 수(성공 + 재시도 소진 후 DLQ 이동 포함). 순수 성공 건수는 " +
+    "kafka_forge_handled_total을 쓰거나 consumed_total - consume_errors_total로 계산한다.",
   labelNames: ["topic", "group"],
   registers: [metricsRegistry],
 });
@@ -52,6 +54,13 @@ export const dedupedTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+export const handledTotal = new Counter({
+  name: "kafka_forge_handled_total",
+  help: "핸들러가 최종적으로 성공한 메시지 수 (재시도 성공 포함, DLQ 이동은 제외)",
+  labelNames: ["topic", "group"],
+  registers: [metricsRegistry],
+});
+
 const allMetrics = [
   producedTotal,
   produceErrorsTotal,
@@ -60,6 +69,7 @@ const allMetrics = [
   consumeDurationSeconds,
   consumerLag,
   dedupedTotal,
+  handledTotal,
 ];
 
 /**

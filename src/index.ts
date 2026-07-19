@@ -1,5 +1,5 @@
 export { createTopicName, assertValidTopicName, toDlqTopicName } from "./topic-name";
-export { defineEvent } from "./event-contract";
+export { defineEvent, defineDlqEvent } from "./event-contract";
 export type { EventContract } from "./event-contract";
 export { StandardProducer } from "./producer";
 export { StandardConsumer } from "./consumer";

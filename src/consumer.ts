@@ -11,6 +11,7 @@ import {
   consumeDurationSeconds,
   consumerLag,
   dedupedTotal,
+  handledTotal,
 } from "./metrics";
 
 export interface RetryOptions {
@@ -198,8 +199,13 @@ export class StandardConsumer {
           group: this.groupId,
         });
         try {
-          await this.runWithRetry(event, parsed.data, handler, retry);
+          const succeeded = await this.runWithRetry(event, parsed.data, handler, retry);
           consumedTotal.inc({ topic: event.topic, group: this.groupId });
+          if (succeeded) {
+            handledTotal.inc({ topic: event.topic, group: this.groupId });
+          } else if (idempotencyStore?.claim) {
+            await idempotencyStore.release?.(idempotencyKey);
+          }
         } finally {
           stopTimer();
         }
@@ -216,22 +222,23 @@ export class StandardConsumer {
     payload: z.infer<T>,
     handler: (payload: z.infer<T>) => Promise<void> | void,
     retry: RetryOptions | null,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!retry) {
       try {
         await handler(payload);
+        return true;
       } catch (err) {
         consumeErrorsTotal.inc({ topic: event.topic, group: this.groupId });
         await this.sendToDlq(event, payload, err);
+        return false;
       }
-      return;
     }
 
     let lastError: unknown;
     for (let attempt = 1; attempt <= retry.attempts; attempt++) {
       try {
         await handler(payload);
-        return;
+        return true;
       } catch (err) {
         lastError = err;
         console.error(
@@ -249,6 +256,7 @@ export class StandardConsumer {
 
     consumeErrorsTotal.inc({ topic: event.topic, group: this.groupId });
     await this.sendToDlq(event, payload, lastError);
+    return false;
   }
 
   private async sendToDlq<T extends ZodType>(

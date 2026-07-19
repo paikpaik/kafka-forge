@@ -5,7 +5,7 @@ import { StandardConsumer } from "./consumer";
 import { defineEvent } from "./event-contract";
 import { InMemoryIdempotencyStore } from "./idempotency";
 import { NonRetryableError } from "./errors";
-import { dedupedTotal } from "./metrics";
+import { dedupedTotal, handledTotal } from "./metrics";
 
 type EachMessageHandler = (args: {
   topic: string;
@@ -204,6 +204,83 @@ describe("StandardConsumer.subscribe/run", () => {
     expect(claim).toHaveBeenCalledTimes(1);
     expect(dlqProducerObj.send).toHaveBeenCalledTimes(1);
     expect(idempotencyStore.markProcessed).not.toHaveBeenCalled();
+  });
+
+  it("claim으로 선점한 메시지가 재시도까지 실패해 DLQ로 가면 release로 선점을 되돌린다", async () => {
+    const { kafka, emit } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const idempotencyStore = new InMemoryIdempotencyStore();
+    const releaseSpy = vi.spyOn(idempotencyStore, "release");
+    const handler = vi.fn().mockRejectedValue(new Error("영구 실패"));
+
+    await consumer.subscribe(OrderCreated, handler, {
+      idempotencyStore,
+      retry: { attempts: 1, initialBackoffMs: 1 },
+    });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { offset: "0" });
+
+    expect(releaseSpy).toHaveBeenCalledWith("order.created.v1:0:0");
+    // release됐으므로 같은 키로 다시 claim할 수 있다 — DLQ 재발행 시 재처리가 막히지 않아야 함
+    await expect(idempotencyStore.claim("order.created.v1:0:0")).resolves.toBe(true);
+  });
+
+  it("handler가 성공하면 release를 호출하지 않는다(성공한 메시지의 선점은 유지돼야 함)", async () => {
+    const { kafka, emit } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const idempotencyStore = new InMemoryIdempotencyStore();
+    const releaseSpy = vi.spyOn(idempotencyStore, "release");
+    const handler = vi.fn();
+
+    await consumer.subscribe(OrderCreated, handler, { idempotencyStore });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { offset: "0" });
+
+    expect(releaseSpy).not.toHaveBeenCalled();
+  });
+
+  it("claim을 구현하지 않은(레거시) 스토어는 handler가 실패해도 release를 호출하지 않는다(하위 호환)", async () => {
+    const { kafka, emit } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const handler = vi.fn().mockRejectedValue(new Error("영구 실패"));
+    const idempotencyStore = {
+      wasProcessed: vi.fn().mockResolvedValue(false),
+      markProcessed: vi.fn().mockResolvedValue(undefined),
+      release: vi.fn(),
+    };
+
+    await consumer.subscribe(OrderCreated, handler, {
+      idempotencyStore,
+      retry: { attempts: 1, initialBackoffMs: 1 },
+    });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 }, { offset: "0" });
+
+    expect(idempotencyStore.release).not.toHaveBeenCalled();
+  });
+
+  it("handler가 성공하면 kafka_forge_handled_total이 증가하고, DLQ로 가면 증가하지 않는다", async () => {
+    const { kafka, emit } = createFakeKafka();
+    const consumer = createConsumer(kafka);
+    const succeedHandler = vi.fn();
+    const failHandler = vi.fn().mockRejectedValue(new Error("영구 실패"));
+
+    const before =
+      (await handledTotal.get()).values.find(
+        (v) => v.labels.topic === "order.created.v1" && v.labels.group === "test-group",
+      )?.value ?? 0;
+
+    await consumer.subscribe(OrderCreated, succeedHandler, { retry: false });
+    await consumer.subscribe(PaymentCompleted, failHandler, { retry: false });
+    await consumer.run();
+    await emit("order.created.v1", { orderId: "order-1", amount: 10 });
+    await emit("payment.completed.v1", { paymentId: "payment-1" });
+
+    const after =
+      (await handledTotal.get()).values.find(
+        (v) => v.labels.topic === "order.created.v1" && v.labels.group === "test-group",
+      )?.value ?? 0;
+    expect(after - before).toBe(1);
   });
 
   it("claim을 구현하지 않은(레거시) 스토어는 기존 wasProcessed/markProcessed 방식으로 동작한다", async () => {

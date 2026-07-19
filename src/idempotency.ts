@@ -9,6 +9,12 @@ export interface IdempotencyStore {
    * 방식을 그대로 사용한다.
    */
   claim?(key: string): Promise<boolean>;
+  /**
+   * (선택) claim으로 선점했지만 결국 처리에 실패해 DLQ로 이동한 경우, 그 선점을 되돌린다.
+   * claim을 구현하지 않았으면 StandardConsumer가 호출하지 않는다 — claim 없이는 애초에
+   * 선점 자체가 없다.
+   */
+  release?(key: string): Promise<void>;
 }
 
 export interface InMemoryIdempotencyStoreOptions {
@@ -55,6 +61,10 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
     if (await this.wasProcessed(key)) return false;
     await this.markProcessed(key);
     return true;
+  }
+
+  async release(key: string): Promise<void> {
+    this.processed.delete(key);
   }
 
   /** 타이머를 멈춘다 (테스트, 짧게 쓰고 버리는 인스턴스 정리용). */
